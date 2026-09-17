@@ -348,16 +348,21 @@ def local_outbox(request):
     now = timezone.now()
     existing = ExchangePackage.objects.filter(package_uuid=package_uuid).first()
     if existing:
-        if existing.object_uuid != object_uuid or existing.payload_hash != payload_hash:
-            return response({"error": "conflict"}, 409)
-        # Re-arm on repeat pushes (the local server retries idempotently every sync run) unless
-        # the phone already confirmed it — never undo a completed delivery.
+        # local_outbox is only ever called by the trusted local server (local_api_auth), which
+        # retries the same logical answer every sync run — re-encrypting uses a random IV, so
+        # payload_hash legitimately differs between pushes of identical content. Unlike the
+        # phone-facing upload endpoint, there's no spoofing risk here worth rejecting a retry
+        # over, so just refresh the content instead of treating that as a conflict. Never touch
+        # a row the phone already confirmed, though — that delivery is done.
         if existing.status != "confirmed_by_phone":
+            existing.object_uuid = object_uuid
             existing.status = "uploaded_to_vps"
+            existing.payload_hash = payload_hash
+            existing.payload_size = payload_size
             existing.encrypted_payload = encrypted_payload
             existing.uploaded_to_vps_at = now
             existing.error = ""
-            existing.save(update_fields=["status", "encrypted_payload", "uploaded_to_vps_at", "error"])
+            existing.save(update_fields=["object_uuid", "status", "payload_hash", "payload_size", "encrypted_payload", "uploaded_to_vps_at", "error"])
         return response({"accepted": True, "package": package_json(existing)})
     row = ExchangePackage.objects.create(
         package_uuid=package_uuid,

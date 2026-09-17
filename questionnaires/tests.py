@@ -205,30 +205,39 @@ class ExchangePackageRelayTests(TestCase):
 
     def test_local_outbox_rearms_on_repeat_push_unless_confirmed(self):
         """The local server retries pushing the same identity_response every sync run
-        (deterministic package_uuid). Repeating it must revive a row a bug once knocked into
-        manual_review_required, but never undo a delivery the phone already confirmed."""
+        (deterministic package_uuid), but re-encrypting uses a random IV each time, so
+        payload_hash legitimately differs between pushes — that must NOT be treated as a
+        conflict (regression: it was, with a 409, so retries could never get through at all).
+        Repeating it must also revive a row a bug once knocked into manual_review_required,
+        but never undo a delivery the phone already confirmed."""
         target_hash = hashlib.sha256(self.token.encode()).hexdigest()
-        body = {
-            "package_uuid": "grant-a7k3demo", "object_uuid": "grant-a7k3demo", "object_type": "identity_response",
-            "target_token_hash": target_hash, "payload_hash": hashlib.sha256(b"x").hexdigest(),
-            "payload_size": 1, "encrypted_payload": "v1:answer",
-        }
-        headers = {"HTTP_X_LEA_LOCAL_KEY": "local-secret", "HTTP_IDEMPOTENCY_KEY": body["package_uuid"]}
-        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
-        row = ExchangePackage.objects.get(package_uuid=body["package_uuid"])
+
+        def push(payload_hash):
+            body = {
+                "package_uuid": "grant-a7k3demo", "object_uuid": "grant-a7k3demo", "object_type": "identity_response",
+                "target_token_hash": target_hash, "payload_hash": payload_hash,
+                "payload_size": 1, "encrypted_payload": f"v1:answer-{payload_hash[:8]}",
+            }
+            headers = {"HTTP_X_LEA_LOCAL_KEY": "local-secret", "HTTP_IDEMPOTENCY_KEY": body["package_uuid"]}
+            return self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+
+        first = push(hashlib.sha256(b"attempt-1").hexdigest())
+        self.assertEqual(first.status_code, 201, first.content)
+        row = ExchangePackage.objects.get(package_uuid="grant-a7k3demo")
         row.status = "manual_review_required"
         row.encrypted_payload = ""
         row.save(update_fields=["status", "encrypted_payload"])
 
-        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+        second = push(hashlib.sha256(b"attempt-2").hexdigest())
+        self.assertEqual(second.status_code, 200, second.content)
         row.refresh_from_db()
         self.assertEqual(row.status, "uploaded_to_vps")
-        self.assertEqual(row.encrypted_payload, "v1:answer")
+        self.assertTrue(row.encrypted_payload.startswith("v1:answer-"))
 
         row.status = "confirmed_by_phone"
         row.encrypted_payload = ""
         row.save(update_fields=["status", "encrypted_payload"])
-        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+        push(hashlib.sha256(b"attempt-3").hexdigest())
         row.refresh_from_db()
         self.assertEqual(row.status, "confirmed_by_phone")
         self.assertFalse(row.encrypted_payload)
