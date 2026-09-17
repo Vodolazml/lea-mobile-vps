@@ -210,3 +210,16 @@ class ExchangePackageRelayTests(TestCase):
         result = self.client.post("/api/mobile/v1/packages/", raw, content_type="application/json", **headers)
         self.assertEqual(result.status_code, 401)
         self.assertFalse(ExchangePackage.objects.exists())
+
+    def test_local_directories_sync_replaces_regions_and_zones(self):
+        BusinessRegion.objects.create(name="Устаревший регион", sort=1)
+        body = {"regions": [{"name": "Крым", "sort": 1, "zones": [{"name": "Симферополь", "sort": 1}, {"name": "Ялта", "sort": 2}]}]}
+        result = self.client.post("/api/local/v1/directories/sync/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(result.json()["regions"], 1)
+        region = BusinessRegion.objects.get()
+        self.assertEqual(region.name, "Крым")
+        self.assertEqual(sorted(region.zones.values_list("name", flat=True)), ["Симферополь", "Ялта"])
+
+        fetched = self.client.get("/api/mobile/v1/directories/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual([r["name"] for r in fetched.json()["regions"]], ["Крым"])

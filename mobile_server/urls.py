@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/local/v1/packages/confirm/", views.local_confirm),
     path("api/local/v1/packages/outbox/", views.local_outbox),
     path("api/local/v1/logs/", views.technical_logs),
+    path("api/local/v1/directories/sync/", views.local_directories_sync),
     path("api/admin/v1/mobile-keys/register/", views.admin_register_key),
     path("api/admin/v1/mobile-keys/revoke/", views.admin_revoke_key),
     path("api/admin/v1/mobile-keys/", views.admin_list_keys),

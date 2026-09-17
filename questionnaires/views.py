@@ -405,6 +405,43 @@ def technical_logs(request):
     return response({"packages": [package_json(row) for row in rows]})
 
 
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_directories_sync(request):
+    """Full replace of the region/zone list the phone reads via /api/mobile/v1/directories/.
+    The local server pushes this every sync run — business data, not a secret, so a plain
+    reference list here doesn't conflict with "nothing readable except the log" on the VPS."""
+    try:
+        body = json.loads(request.body or b"{}")
+        regions = body.get("regions")
+        if not isinstance(regions, list):
+            raise ValueError()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return response({"error": "invalid_directories"}, 400)
+    with transaction.atomic():
+        DeliveryZone.objects.all().delete()
+        BusinessRegion.objects.all().delete()
+        for index, item in enumerate(regions[:500]):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()[:120]
+            if not name:
+                continue
+            region = BusinessRegion.objects.create(name=name, sort=int(item.get("sort") or index))
+            zones = item.get("zones") or []
+            if not isinstance(zones, list):
+                continue
+            for zi, zone in enumerate(zones[:500]):
+                if not isinstance(zone, dict):
+                    continue
+                zname = str(zone.get("name") or "").strip()[:120]
+                if not zname:
+                    continue
+                DeliveryZone.objects.create(region=region, name=zname, sort=int(zone.get("sort") or zi))
+    return response({"accepted": True, "regions": BusinessRegion.objects.count()})
+
+
 # ---------------------------------------------------------------------------
 # Admin key management: an office admin registers/revokes a phone's Bearer
 # token hash here. The raw token itself never passes through this API or is
