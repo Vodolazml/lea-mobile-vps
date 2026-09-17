@@ -1,0 +1,14 @@
+﻿[Unit]
+Description=LEA mobile VPS bridge
+After=network.target
+
+[Service]
+User=rus12
+Group=rus12
+WorkingDirectory=/opt/lea-mobile
+EnvironmentFile=/etc/lea-mobile.env
+ExecStart=/opt/lea-mobile/.venv/bin/gunicorn mobile_server.wsgi:application --bind 127.0.0.1:8011 --workers 2 --timeout 60
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
