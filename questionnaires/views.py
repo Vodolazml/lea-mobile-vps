@@ -270,8 +270,11 @@ def local_api_auth(view):
 @require_POST
 @local_api_auth
 def local_inbox(request):
+    """Only phone-uploaded packages — local_to_phone (identity answers the local server itself
+    pushed via local_outbox) must never come back through here, or the office would try to
+    process its own outgoing packages as if a phone had sent them."""
     now = timezone.now()
-    rows = list(ExchangePackage.objects.filter(status="uploaded_to_vps", encrypted_payload__gt="").order_by("created_at")[:100])
+    rows = list(ExchangePackage.objects.filter(direction="phone_to_vps", status="uploaded_to_vps", encrypted_payload__gt="").order_by("created_at")[:100])
     for row in rows:
         row.status = "downloaded_by_local_server"
         row.downloaded_by_local_at = now
@@ -347,6 +350,14 @@ def local_outbox(request):
     if existing:
         if existing.object_uuid != object_uuid or existing.payload_hash != payload_hash:
             return response({"error": "conflict"}, 409)
+        # Re-arm on repeat pushes (the local server retries idempotently every sync run) unless
+        # the phone already confirmed it — never undo a completed delivery.
+        if existing.status != "confirmed_by_phone":
+            existing.status = "uploaded_to_vps"
+            existing.encrypted_payload = encrypted_payload
+            existing.uploaded_to_vps_at = now
+            existing.error = ""
+            existing.save(update_fields=["status", "encrypted_payload", "uploaded_to_vps_at", "error"])
         return response({"accepted": True, "package": package_json(existing)})
     row = ExchangePackage.objects.create(
         package_uuid=package_uuid,

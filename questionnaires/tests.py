@@ -180,6 +180,59 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(row.status, "confirmed_by_phone")
         self.assertFalse(row.encrypted_payload)
 
+    def test_local_inbox_never_returns_local_to_phone_packages(self):
+        """Regression: local_inbox used to return every uploaded_to_vps row regardless of
+        direction, so the office would pull back its own identity_response pushes and choke
+        trying to process them as an inbound questionnaire."""
+        self.upload()  # a genuine phone_to_vps package
+        outbox_body = {
+            "package_uuid": "A7K3-ANSWER3-Z91P2Q-PKG",
+            "object_uuid": self.object_uuid,
+            "object_type": "identity_response",
+            "target_token_hash": hashlib.sha256(self.token.encode()).hexdigest(),
+            "payload_hash": hashlib.sha256(b"x").hexdigest(),
+            "payload_size": 1,
+            "encrypted_payload": "v1:answer-for-the-phone-not-the-office",
+        }
+        self.client.post(
+            "/api/local/v1/packages/outbox/", json.dumps(outbox_body), content_type="application/json",
+            HTTP_X_LEA_LOCAL_KEY="local-secret", HTTP_IDEMPOTENCY_KEY=outbox_body["package_uuid"],
+        )
+        inbox = self.client.post("/api/local/v1/packages/inbox/", json.dumps({}), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        uuids = [p["package_uuid"] for p in inbox.json()["packages"]]
+        self.assertEqual(uuids, [self.package_uuid])
+        self.assertNotIn("A7K3-ANSWER3-Z91P2Q-PKG", uuids)
+
+    def test_local_outbox_rearms_on_repeat_push_unless_confirmed(self):
+        """The local server retries pushing the same identity_response every sync run
+        (deterministic package_uuid). Repeating it must revive a row a bug once knocked into
+        manual_review_required, but never undo a delivery the phone already confirmed."""
+        target_hash = hashlib.sha256(self.token.encode()).hexdigest()
+        body = {
+            "package_uuid": "grant-a7k3demo", "object_uuid": "grant-a7k3demo", "object_type": "identity_response",
+            "target_token_hash": target_hash, "payload_hash": hashlib.sha256(b"x").hexdigest(),
+            "payload_size": 1, "encrypted_payload": "v1:answer",
+        }
+        headers = {"HTTP_X_LEA_LOCAL_KEY": "local-secret", "HTTP_IDEMPOTENCY_KEY": body["package_uuid"]}
+        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+        row = ExchangePackage.objects.get(package_uuid=body["package_uuid"])
+        row.status = "manual_review_required"
+        row.encrypted_payload = ""
+        row.save(update_fields=["status", "encrypted_payload"])
+
+        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+        row.refresh_from_db()
+        self.assertEqual(row.status, "uploaded_to_vps")
+        self.assertEqual(row.encrypted_payload, "v1:answer")
+
+        row.status = "confirmed_by_phone"
+        row.encrypted_payload = ""
+        row.save(update_fields=["status", "encrypted_payload"])
+        self.client.post("/api/local/v1/packages/outbox/", json.dumps(body), content_type="application/json", **headers)
+        row.refresh_from_db()
+        self.assertEqual(row.status, "confirmed_by_phone")
+        self.assertFalse(row.encrypted_payload)
+
     def test_mobile_inbox_never_returns_another_phones_package(self):
         other_token = "someone-elses-token"
         MobileApiKey.objects.create(token_hash=hashlib.sha256(other_token.encode()).hexdigest(), label="other-phone", active=True)
