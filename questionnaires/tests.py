@@ -103,7 +103,7 @@ class ExchangePackageRelayTests(TestCase):
         raw, headers = self.signed_headers("/api/mobile/v1/packages/", body, self.package_uuid)
         return self.client.post("/api/mobile/v1/packages/", raw, content_type="application/json", **headers)
 
-    def test_package_lifecycle_deletes_payload_only_after_confirm(self):
+    def test_package_lifecycle_deletes_row_outright_after_confirm(self):
         result = self.upload()
         self.assertEqual(result.status_code, 201, result.content)
         row = ExchangePackage.objects.get(package_uuid=self.package_uuid)
@@ -123,10 +123,8 @@ class ExchangePackageRelayTests(TestCase):
 
         confirm = self.client.post("/api/local/v1/packages/confirm/", json.dumps({"packages": [{"package_uuid": self.package_uuid, "status": "processed_by_local_server"}]}), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
         self.assertEqual(confirm.status_code, 200)
-        row.refresh_from_db()
-        self.assertEqual(row.status, "processed_by_local_server")
-        self.assertFalse(row.encrypted_payload, "payload must be wiped from VPS once the local server confirmed it")
-        self.assertIsNotNone(row.payload_deleted_at)
+        self.assertEqual(confirm.json()["packages"][0]["status"], "processed_by_local_server")
+        self.assertFalse(ExchangePackage.objects.filter(package_uuid=self.package_uuid).exists(), "VPS is a relay, not storage — a cleanly finished package must not linger")
 
     def test_local_endpoints_require_local_key(self):
         self.assertEqual(self.client.post("/api/local/v1/packages/inbox/", "{}", content_type="application/json").status_code, 401)

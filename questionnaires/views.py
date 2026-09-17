@@ -302,12 +302,16 @@ def local_confirm(request):
             status = str(item.get("status") or "processed_by_local_server")
             row = ExchangePackage.objects.get(package_uuid=package_uuid)
             if status in {"processed_by_local_server", "duplicate_on_local_server"}:
+                # Done, no error — the VPS is just a relay, so nothing to keep once delivered.
                 row.status = status
                 row.confirmed_by_local_at = now
                 row.encrypted_payload = ""
                 row.payload_deleted_at = now
                 row.error = ""
-                row.save(update_fields=["status", "confirmed_by_local_at", "encrypted_payload", "payload_deleted_at", "error"])
+                package = package_json(row)
+                row.delete()
+                results.append(package)
+                continue
             elif status in {"conflict_on_local_server", "manual_review_required"}:
                 row.status = status
                 row.confirmed_by_local_at = now
@@ -401,7 +405,12 @@ def mobile_inbox(request):
 @require_POST
 @api_auth
 def mobile_ack(request):
-    """The phone confirms it received and decrypted a local_to_phone package; the VPS wipes it."""
+    """The phone confirms it received and decrypted a local_to_phone package. Wipes the
+    payload but — unlike a confirmed questionnaire — keeps the row as a lightweight
+    confirmed_by_phone marker for a while (cleaned up later by local_prune_packages): the
+    office's sync retries the same deterministic grant-<hash> package every run for as long
+    as someone still has access, and this marker is what stops that from resurrecting a
+    fresh, unclaimed package for an employee who's already fully authorized."""
     try:
         body = json.loads(request.body or b"{}")
         ids = [valid_sync_id(item) for item in (body.get("package_uuids") or [])[:50]]
