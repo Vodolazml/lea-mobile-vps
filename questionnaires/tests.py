@@ -4,6 +4,7 @@ import json
 import os
 import time
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
@@ -285,3 +286,20 @@ class ExchangePackageRelayTests(TestCase):
 
         fetched = self.client.get("/api/mobile/v1/directories/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual([r["name"] for r in fetched.json()["regions"]], ["Крым"])
+
+    def test_local_prune_packages_deletes_only_old_finished_rows(self):
+        from django.utils import timezone
+
+        old_done = ExchangePackage.objects.create(package_uuid="OLD-DONE", object_uuid="OLD-DONE", object_type="questionnaire", status="processed_by_local_server", payload_hash="x" * 64)
+        ExchangePackage.objects.filter(pk=old_done.pk).update(created_at=timezone.now() - timedelta(days=10))
+        recent_done = ExchangePackage.objects.create(package_uuid="RECENT-DONE", object_uuid="RECENT-DONE", object_type="questionnaire", status="processed_by_local_server", payload_hash="x" * 64)
+        old_pending = ExchangePackage.objects.create(package_uuid="OLD-PENDING", object_uuid="OLD-PENDING", object_type="questionnaire", status="uploaded_to_vps", payload_hash="x" * 64)
+        ExchangePackage.objects.filter(pk=old_pending.pk).update(created_at=timezone.now() - timedelta(days=10))
+        old_conflict = ExchangePackage.objects.create(package_uuid="OLD-CONFLICT", object_uuid="OLD-CONFLICT", object_type="questionnaire", status="manual_review_required", payload_hash="x" * 64)
+        ExchangePackage.objects.filter(pk=old_conflict.pk).update(created_at=timezone.now() - timedelta(days=10))
+
+        result = self.client.post("/api/local/v1/packages/prune/", json.dumps({"older_than_days": 7}), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(result.json()["deleted"], 1)
+        remaining = set(ExchangePackage.objects.values_list("package_uuid", flat=True))
+        self.assertEqual(remaining, {"RECENT-DONE", "OLD-PENDING", "OLD-CONFLICT"})

@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import time
+from datetime import timedelta
 from functools import wraps
 
 from django.db import transaction
@@ -419,6 +420,30 @@ def technical_logs(request):
     """The only thing visible about exchanged data on this VPS: metadata, never content."""
     rows = ExchangePackage.objects.all().order_by("-created_at")[:500]
     return response({"packages": [package_json(row) for row in rows]})
+
+
+# Finished packages the phone/local server no longer need to see — never anything still
+# waiting for someone, and never anything flagged for a human to look at.
+TERMINAL_STATUSES = {"processed_by_local_server", "processed_direct_by_local", "duplicate_on_local_server", "confirmed_by_phone"}
+
+
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_prune_packages(request):
+    """Deletes finished exchange packages older than the requested age — directories are a
+    separate, always-current table (never a queued package), so nothing here ever touches
+    what the phone downloads for business regions/zones."""
+    try:
+        body = json.loads(request.body or b"{}")
+        older_than_days = int(body.get("older_than_days") or 7)
+        if not 0 <= older_than_days <= 3650:
+            raise ValueError()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return response({"error": "invalid_request"}, 400)
+    cutoff = timezone.now() - timedelta(days=older_than_days)
+    deleted, _ = ExchangePackage.objects.filter(status__in=TERMINAL_STATUSES, created_at__lt=cutoff).delete()
+    return response({"accepted": True, "deleted": deleted})
 
 
 @csrf_exempt
