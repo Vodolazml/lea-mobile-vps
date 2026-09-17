@@ -302,16 +302,17 @@ def local_confirm(request):
             status = str(item.get("status") or "processed_by_local_server")
             row = ExchangePackage.objects.get(package_uuid=package_uuid)
             if status in {"processed_by_local_server", "duplicate_on_local_server"}:
-                # Done, no error — the VPS is just a relay, so nothing to keep once delivered.
+                # VPS is the log of record for the exchange — the local server only ever
+                # displays a mirror of it (see sync_vps_exchange's mirror_vps_log). Wipe the
+                # payload (the actual business data), but keep the row: uuid/type/device and
+                # every lifecycle timestamp stay visible in "Лог обмена" until someone prunes
+                # it on purpose via /api/local/v1/packages/prune/.
                 row.status = status
                 row.confirmed_by_local_at = now
                 row.encrypted_payload = ""
                 row.payload_deleted_at = now
                 row.error = ""
-                package = package_json(row)
-                row.delete()
-                results.append(package)
-                continue
+                row.save(update_fields=["status", "confirmed_by_local_at", "encrypted_payload", "payload_deleted_at", "error"])
             elif status in {"conflict_on_local_server", "manual_review_required"}:
                 row.status = status
                 row.confirmed_by_local_at = now
