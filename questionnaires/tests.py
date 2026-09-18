@@ -186,6 +186,66 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(row.status, "confirmed_by_phone")
         self.assertFalse(row.encrypted_payload)
 
+    def test_local_confirm_direct_wipes_payload_for_a_package_delivered_over_the_lan(self):
+        """If the phone got a grant-/dirs- package straight from the office over the LAN, it
+        never calls mobile_ack here — the local server reports the delivery itself instead,
+        so this now-redundant VPS copy doesn't sit around forever waiting for an ack that will
+        never come."""
+        answer_uuid = "A7K3-DIRECT01-Z91P2Q-PKG"
+        outbox_body = {
+            "package_uuid": answer_uuid,
+            "object_uuid": answer_uuid,
+            "object_type": "identity_response",
+            "target_token_hash": hashlib.sha256(self.token.encode()).hexdigest(),
+            "payload_hash": hashlib.sha256(b"x").hexdigest(),
+            "payload_size": 1,
+            "encrypted_payload": "v1:opaque",
+        }
+        outbox = self.client.post(
+            "/api/local/v1/packages/outbox/", json.dumps(outbox_body), content_type="application/json",
+            HTTP_X_LEA_LOCAL_KEY="local-secret", HTTP_IDEMPOTENCY_KEY=answer_uuid,
+        )
+        self.assertEqual(outbox.status_code, 201, outbox.content)
+
+        confirm = self.client.post(
+            "/api/local/v1/packages/confirm-direct/", json.dumps({"package_uuids": [answer_uuid]}),
+            content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret",
+        )
+        self.assertEqual(confirm.status_code, 200, confirm.content)
+        self.assertEqual(confirm.json()["confirmed"], 1)
+        row = ExchangePackage.objects.get(package_uuid=answer_uuid)
+        self.assertEqual(row.status, "confirmed_direct")
+        self.assertFalse(row.encrypted_payload)
+        self.assertIsNotNone(row.confirmed_by_phone_at)
+        self.assertIsNotNone(row.payload_deleted_at)
+
+    def test_local_confirm_direct_never_overrides_a_real_phone_ack(self):
+        answer_uuid = "A7K3-DIRECT02-Z91P2Q-PKG"
+        outbox_body = {
+            "package_uuid": answer_uuid,
+            "object_uuid": answer_uuid,
+            "object_type": "identity_response",
+            "target_token_hash": hashlib.sha256(self.token.encode()).hexdigest(),
+            "payload_hash": hashlib.sha256(b"x").hexdigest(),
+            "payload_size": 1,
+            "encrypted_payload": "v1:opaque",
+        }
+        self.client.post(
+            "/api/local/v1/packages/outbox/", json.dumps(outbox_body), content_type="application/json",
+            HTTP_X_LEA_LOCAL_KEY="local-secret", HTTP_IDEMPOTENCY_KEY=answer_uuid,
+        )
+        self.client.post(
+            "/api/mobile/v1/packages/ack/", json.dumps({"package_uuids": [answer_uuid]}),
+            content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+        confirm = self.client.post(
+            "/api/local/v1/packages/confirm-direct/", json.dumps({"package_uuids": [answer_uuid]}),
+            content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret",
+        )
+        self.assertEqual(confirm.json()["confirmed"], 0)
+        row = ExchangePackage.objects.get(package_uuid=answer_uuid)
+        self.assertEqual(row.status, "confirmed_by_phone")
+
     def test_local_inbox_never_returns_local_to_phone_packages(self):
         """Regression: local_inbox used to return every uploaded_to_vps row regardless of
         direction, so the office would pull back its own identity_response pushes and choke

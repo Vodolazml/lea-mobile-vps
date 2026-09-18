@@ -429,6 +429,26 @@ def mobile_ack(request):
     return response({"accepted": True, "confirmed": updated})
 
 
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_confirm_direct(request):
+    """The local server reports that a local_to_phone package (grant-/dirs-) it created was
+    already delivered straight over the LAN, bypassing this relay entirely — so the phone will
+    never call mobile_ack for it. Same outcome as that ack (wipe payload, keep the row), but a
+    distinct status so the log is honest about which channel actually did the work."""
+    try:
+        body = json.loads(request.body or b"{}")
+        ids = [valid_sync_id(item) for item in (body.get("package_uuids") or [])[:50]]
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return response({"error": "invalid_confirm"}, 400)
+    now = timezone.now()
+    updated = ExchangePackage.objects.filter(
+        package_uuid__in=ids, direction="local_to_phone",
+    ).exclude(status="confirmed_by_phone").update(status="confirmed_direct", confirmed_by_phone_at=now, encrypted_payload="", payload_deleted_at=now)
+    return response({"accepted": True, "confirmed": updated})
+
+
 @require_GET
 @local_api_auth
 def technical_logs(request):
