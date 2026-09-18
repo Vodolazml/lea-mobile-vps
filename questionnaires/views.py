@@ -349,6 +349,9 @@ def local_outbox(request):
             raise ValueError()
         if request.headers.get("Idempotency-Key") != package_uuid:
             raise ValueError()
+        # Who this answer is for — the local server already knows (it looked the staff member
+        # up to build the answer), so the log can show a name instead of a blank "?".
+        user_id = str(body.get("user_id") or "")[:100]
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         return response({"error": "invalid_package"}, 400)
     now = timezone.now()
@@ -362,18 +365,20 @@ def local_outbox(request):
         # a row the phone already confirmed, though — that delivery is done.
         if existing.status != "confirmed_by_phone":
             existing.object_uuid = object_uuid
+            existing.user_id = user_id or existing.user_id
             existing.status = "uploaded_to_vps"
             existing.payload_hash = payload_hash
             existing.payload_size = payload_size
             existing.encrypted_payload = encrypted_payload
             existing.uploaded_to_vps_at = now
             existing.error = ""
-            existing.save(update_fields=["object_uuid", "status", "payload_hash", "payload_size", "encrypted_payload", "uploaded_to_vps_at", "error"])
+            existing.save(update_fields=["object_uuid", "user_id", "status", "payload_hash", "payload_size", "encrypted_payload", "uploaded_to_vps_at", "error"])
         return response({"accepted": True, "package": package_json(existing)})
     row = ExchangePackage.objects.create(
         package_uuid=package_uuid,
         object_uuid=object_uuid,
         object_type=object_type,
+        user_id=user_id,
         target_token_hash=target_token_hash,
         direction="local_to_phone",
         channel="vps",

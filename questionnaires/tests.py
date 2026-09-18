@@ -154,6 +154,7 @@ class ExchangePackageRelayTests(TestCase):
             "package_uuid": answer_uuid,
             "object_uuid": self.object_uuid,
             "object_type": "identity_response",
+            "user_id": "42",
             "target_token_hash": hashlib.sha256(self.token.encode()).hexdigest(),
             "payload_hash": answer_hash,
             "payload_size": len(answer_payload),
@@ -164,6 +165,7 @@ class ExchangePackageRelayTests(TestCase):
             HTTP_X_LEA_LOCAL_KEY="local-secret", HTTP_IDEMPOTENCY_KEY=answer_uuid,
         )
         self.assertEqual(outbox.status_code, 201, outbox.content)
+        self.assertEqual(outbox.json()["package"]["user_id"], "42")
 
         inbox = self.client.get("/api/mobile/v1/packages/inbox/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual(inbox.status_code, 200)
@@ -172,6 +174,7 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(packages[0]["encrypted_payload"], answer_payload)
         row = ExchangePackage.objects.get(package_uuid=answer_uuid)
         self.assertEqual(row.status, "downloaded_by_phone")
+        self.assertEqual(row.user_id, "42")
 
         ack = self.client.post(
             "/api/mobile/v1/packages/ack/", json.dumps({"package_uuids": [answer_uuid]}),
