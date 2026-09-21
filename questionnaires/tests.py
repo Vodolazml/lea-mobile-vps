@@ -246,6 +246,34 @@ class ExchangePackageRelayTests(TestCase):
         row = ExchangePackage.objects.get(package_uuid=answer_uuid)
         self.assertEqual(row.status, "confirmed_by_phone")
 
+    def test_local_outbox_force_rearms_a_confirmed_package_but_a_plain_retry_does_not(self):
+        answer_uuid = "A7K3-REGRANT1-Z91P2Q-PKG"
+        body = {
+            "package_uuid": answer_uuid, "object_uuid": answer_uuid, "object_type": "identity_response",
+            "target_token_hash": hashlib.sha256(self.token.encode()).hexdigest(),
+            "payload_hash": hashlib.sha256(b"x").hexdigest(), "payload_size": 1, "encrypted_payload": "v1:first",
+        }
+
+        def push(**extra):
+            return self.client.post("/api/local/v1/packages/outbox/", json.dumps({**body, **extra}), content_type="application/json",
+                                    HTTP_X_LEA_LOCAL_KEY="local-secret", HTTP_IDEMPOTENCY_KEY=answer_uuid)
+
+        self.assertEqual(push().status_code, 201)
+        self.client.post("/api/mobile/v1/packages/ack/", json.dumps({"package_uuids": [answer_uuid]}),
+                         content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        push(encrypted_payload="v1:retry")  # plain periodic retry: frozen once confirmed
+        row = ExchangePackage.objects.get(package_uuid=answer_uuid)
+        self.assertEqual(row.status, "confirmed_by_phone")
+        self.assertFalse(row.encrypted_payload)
+
+        push(encrypted_payload="v1:regrant", force=True)  # admin re-issue after the phone logged out
+        row.refresh_from_db()
+        self.assertEqual(row.status, "uploaded_to_vps")
+        self.assertEqual(row.encrypted_payload, "v1:regrant")
+        self.assertIsNone(row.confirmed_by_phone_at)
+        inbox = self.client.get("/api/mobile/v1/packages/inbox/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual([p["package_uuid"] for p in inbox.json()["packages"]], [answer_uuid])
+
     def test_local_inbox_never_returns_local_to_phone_packages(self):
         """Regression: local_inbox used to return every uploaded_to_vps row regardless of
         direction, so the office would pull back its own identity_response pushes and choke

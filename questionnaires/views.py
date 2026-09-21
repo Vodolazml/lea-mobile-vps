@@ -363,7 +363,10 @@ def local_outbox(request):
         # phone-facing upload endpoint, there's no spoofing risk here worth rejecting a retry
         # over, so just refresh the content instead of treating that as a conflict. Never touch
         # a row the phone already confirmed, though — that delivery is done.
-        if existing.status != "confirmed_by_phone":
+        # force=True is an admin explicitly re-issuing access (e.g. the phone logged out and
+        # needs its grant again) — the only case where a confirmed row is armed once more.
+        force = bool(body.get("force"))
+        if force or existing.status not in {"confirmed_by_phone", "confirmed_direct"}:
             existing.object_uuid = object_uuid
             existing.user_id = user_id or existing.user_id
             existing.status = "uploaded_to_vps"
@@ -372,7 +375,10 @@ def local_outbox(request):
             existing.encrypted_payload = encrypted_payload
             existing.uploaded_to_vps_at = now
             existing.error = ""
-            existing.save(update_fields=["object_uuid", "user_id", "status", "payload_hash", "payload_size", "encrypted_payload", "uploaded_to_vps_at", "error"])
+            existing.delivered_to_phone_at = None
+            existing.confirmed_by_phone_at = None
+            existing.payload_deleted_at = None
+            existing.save(update_fields=["object_uuid", "user_id", "status", "payload_hash", "payload_size", "encrypted_payload", "uploaded_to_vps_at", "error", "delivered_to_phone_at", "confirmed_by_phone_at", "payload_deleted_at"])
         return response({"accepted": True, "package": package_json(existing)})
     row = ExchangePackage.objects.create(
         package_uuid=package_uuid,
