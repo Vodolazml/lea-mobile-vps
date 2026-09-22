@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -557,6 +559,59 @@ def local_directories_sync(request):
                     continue
                 DeliveryZone.objects.create(region=region, name=zname, sort=int(zone.get("sort") or zi))
     return response({"accepted": True, "regions": BusinessRegion.objects.count()})
+
+
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_publish_release(request):
+    """The local server's admin uploads a new APK on questionnaires/releases/ there, and that
+    page forwards it here as base64 JSON (simpler than building multipart from Python, and the
+    file's small enough that the size cost doesn't matter) — VPS is what every phone's update
+    check actually reads from (api/mobile/v1/version/, api/mobile/v1/download/), since it's
+    reachable from anywhere, not just the office LAN."""
+    try:
+        body = json.loads(request.body or b"{}")
+        version_code = int(body.get("version_code") or 0)
+        version_name = str(body.get("version_name") or "").strip()[:40]
+        notes = str(body.get("notes") or "").strip()[:2000]
+        apk_b64 = str(body.get("apk_base64") or "")
+        if version_code <= 0 or not version_name or not apk_b64:
+            raise ValueError()
+        apk_bytes = base64.b64decode(apk_b64.encode("ascii"), validate=True)
+        if not apk_bytes or len(apk_bytes) > 200 * 1024 * 1024:
+            raise ValueError()
+    except (ValueError, TypeError, json.JSONDecodeError, binascii.Error, UnicodeEncodeError):
+        return response({"error": "invalid_release"}, 400)
+    from django.conf import settings as django_settings
+    django_settings.RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+    with open(django_settings.RELEASES_DIR / "latest.apk", "wb") as handle:
+        handle.write(apk_bytes)
+    now = timezone.now()
+    with open(django_settings.RELEASES_DIR / "version.json", "w", encoding="utf-8") as handle:
+        json.dump({"version_code": version_code, "version_name": version_name, "notes": notes, "published_at": ms(now)}, handle, ensure_ascii=False)
+    return response({"accepted": True, "version_code": version_code, "version_name": version_name, "size": len(apk_bytes)}, 201)
+
+
+@require_GET
+@local_api_auth
+def local_release_status(request):
+    """What's currently published, for the questionnaires/releases/ admin page to show —
+    separate from api/mobile/v1/version/ because that one's phone-facing (Bearer token auth)
+    and this is the trusted local-server channel (X-LEA-Local-Key), like every other local_*
+    endpoint here."""
+    from django.conf import settings as django_settings
+    try:
+        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+            info = json.load(handle)
+    except (FileNotFoundError, ValueError, OSError):
+        return response({"version_code": 0, "version_name": "", "notes": "", "published_at": 0})
+    return response({
+        "version_code": int(info.get("version_code") or 0),
+        "version_name": str(info.get("version_name") or ""),
+        "notes": str(info.get("notes") or ""),
+        "published_at": int(info.get("published_at") or 0),
+    })
 
 
 # ---------------------------------------------------------------------------

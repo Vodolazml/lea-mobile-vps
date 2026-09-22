@@ -408,6 +408,36 @@ class ExchangePackageRelayTests(TestCase):
         fetched = self.client.get("/api/mobile/v1/directories/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual([r["name"] for r in fetched.json()["regions"]], ["Крым"])
 
+    def test_local_publish_release_updates_status_and_public_download(self):
+        import base64
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            with patch("django.conf.settings.RELEASES_DIR", Path(tmp)):
+                status_before = self.client.get("/api/local/v1/release/status/", HTTP_X_LEA_LOCAL_KEY="local-secret")
+                self.assertEqual(status_before.json()["version_code"], 0)
+
+                body = {"version_code": 36, "version_name": "2.27", "notes": "Автообновление",
+                        "apk_base64": base64.b64encode(b"fake-apk-bytes").decode("ascii")}
+                publish = self.client.post("/api/local/v1/release/publish/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+                self.assertEqual(publish.status_code, 201, publish.content)
+
+                status_after = self.client.get("/api/local/v1/release/status/", HTTP_X_LEA_LOCAL_KEY="local-secret")
+                self.assertEqual(status_after.json()["version_code"], 36)
+                self.assertEqual(status_after.json()["version_name"], "2.27")
+                self.assertGreater(status_after.json()["published_at"], 0)
+
+                phone_version = self.client.get("/api/mobile/v1/version/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+                self.assertEqual(phone_version.json()["version_code"], 36)
+                download = self.client.get("/api/mobile/v1/download/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+                self.assertEqual(b"".join(download.streaming_content), b"fake-apk-bytes")
+
+    def test_local_publish_release_requires_local_key_and_rejects_junk(self):
+        self.assertEqual(self.client.post("/api/local/v1/release/publish/", "{}", content_type="application/json").status_code, 401)
+        result = self.client.post("/api/local/v1/release/publish/", json.dumps({"version_code": 0}), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(result.status_code, 400)
+
     def test_local_prune_packages_deletes_only_old_finished_rows(self):
         from django.utils import timezone
 

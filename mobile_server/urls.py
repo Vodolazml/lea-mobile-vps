@@ -17,6 +17,8 @@ urlpatterns = [
     path("api/local/v1/packages/outbox/", views.local_outbox),
     path("api/local/v1/logs/", views.technical_logs),
     path("api/local/v1/directories/sync/", views.local_directories_sync),
+    path("api/local/v1/release/publish/", views.local_publish_release),
+    path("api/local/v1/release/status/", views.local_release_status),
     path("api/local/v1/packages/prune/", views.local_prune_packages),
     path("api/admin/v1/mobile-keys/register/", views.admin_register_key),
     path("api/admin/v1/mobile-keys/revoke/", views.admin_revoke_key),
