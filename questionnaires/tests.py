@@ -37,6 +37,34 @@ class MobileKeyAuthTests(TestCase):
         names = [item["name"] for item in result.json()["regions"]]
         self.assertEqual(names, ["Крым"])
 
+    def test_app_version_with_no_release_published_reports_no_update(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch("django.conf.settings.RELEASES_DIR", __import__("pathlib").Path(tmp)):
+            result = self.client.get("/api/mobile/v1/version/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["version_code"], 0)
+
+    def test_app_version_and_download_serve_a_published_release(self):
+        import tempfile
+        from pathlib import Path
+        # ignore_cleanup_errors: FileResponse's streamed file handle can still be closing on
+        # Windows test runners when the context manager tears down — irrelevant on the real
+        # (Linux) VPS, just noisy here.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            releases = Path(tmp)
+            (releases / "version.json").write_text(json.dumps({"version_code": 36, "version_name": "2.27", "notes": "Автообновление"}), encoding="utf-8")
+            (releases / "latest.apk").write_bytes(b"fake-apk-bytes")
+            with patch("django.conf.settings.RELEASES_DIR", releases):
+                version = self.client.get("/api/mobile/v1/version/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+                download = self.client.get("/api/mobile/v1/download/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(version.json()["version_code"], 36)
+        self.assertEqual(version.json()["version_name"], "2.27")
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(b"".join(download.streaming_content), b"fake-apk-bytes")
+
+    def test_app_download_requires_a_known_token(self):
+        self.assertEqual(self.client.get("/api/mobile/v1/download/").status_code, 401)
+
 
 class AdminKeyManagementTests(TestCase):
     def setUp(self):

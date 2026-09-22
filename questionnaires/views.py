@@ -158,6 +158,41 @@ def directories(request):
 
 
 # ---------------------------------------------------------------------------
+# Self-hosted app updates: no Play Store, so the phone checks VPS (reachable from anywhere,
+# unlike the office server) for a version.json dropped next to the APK by publish_release.sh,
+# and downloads the APK from here too. Neither endpoint touches the database — version.json
+# missing or unreadable just means "no update", never an error.
+# ---------------------------------------------------------------------------
+
+@require_GET
+@api_auth
+def app_version(request):
+    from django.conf import settings as django_settings
+    import json as json_module
+    try:
+        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+            info = json_module.load(handle)
+        return response({
+            "version_code": int(info.get("version_code") or 0),
+            "version_name": str(info.get("version_name") or ""),
+            "notes": str(info.get("notes") or ""),
+        })
+    except (FileNotFoundError, ValueError, OSError):
+        return response({"version_code": 0, "version_name": "", "notes": ""})
+
+
+@require_GET
+@api_auth
+def app_download(request):
+    from django.conf import settings as django_settings
+    from django.http import FileResponse, Http404
+    path = django_settings.RELEASES_DIR / "latest.apk"
+    if not path.exists():
+        raise Http404("no release published")
+    return FileResponse(open(path, "rb"), as_attachment=True, filename="lea-ankety.apk", content_type="application/vnd.android.package-archive")
+
+
+# ---------------------------------------------------------------------------
 # Encrypted package relay. The VPS only stores/forwards the opaque
 # encrypted_payload blob — it has no decryption key and never reads field
 # content, so there is nothing readable in the open here except this log.
