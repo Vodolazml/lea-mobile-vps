@@ -240,7 +240,7 @@ def store_uploaded_package(request):
         encrypted_payload = str(body.get("encrypted_payload") or "")
         payload_hash = str(body.get("payload_hash") or "")
         payload_size = int(body.get("payload_size") or len(encrypted_payload))
-        if object_type not in {"questionnaire", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
+        if object_type not in {"questionnaire", "opros", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
             raise ValueError()
         if request.headers.get("Idempotency-Key") != package_uuid:
             raise ValueError()

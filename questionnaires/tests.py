@@ -158,6 +158,25 @@ class ExchangePackageRelayTests(TestCase):
         self.assertFalse(row.encrypted_payload, "payload must be wiped once confirmed")
         self.assertIsNotNone(row.payload_deleted_at)
 
+    def test_opros_object_type_is_accepted_same_as_questionnaire(self):
+        """VPS relays payloads opaquely regardless of object_type — this confirms the "Опрос
+        клиентов" survey anketa's object_type ("opros") was added to the allowlist alongside
+        "questionnaire", not just assumed to already work."""
+        body = {
+            "package_uuid": "A7K3-OPROSVPS-Z91P2Q-PKG",
+            "object_uuid": "A7K3-OPROSVPS-Z91P2Q-OP",
+            "object_type": "opros",
+            "device_key": "A7K3",
+            "user_id": "test-phone",
+            "payload_hash": self.payload_hash,
+            "payload_size": len(self.encrypted_payload),
+            "encrypted_payload": self.encrypted_payload,
+        }
+        raw, headers = self.signed_headers("/api/mobile/v1/packages/", body, "A7K3-OPROSVPS-Z91P2Q-PKG")
+        result = self.client.post("/api/mobile/v1/packages/", raw, content_type="application/json", **headers)
+        self.assertEqual(result.status_code, 201, result.content)
+        self.assertEqual(ExchangePackage.objects.get(package_uuid="A7K3-OPROSVPS-Z91P2Q-PKG").object_type, "opros")
+
     def test_local_endpoints_require_local_key(self):
         self.assertEqual(self.client.post("/api/local/v1/packages/inbox/", "{}", content_type="application/json").status_code, 401)
         self.assertEqual(self.client.get("/api/local/v1/logs/").status_code, 401)
