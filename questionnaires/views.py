@@ -14,7 +14,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import ApiNonce, BusinessRegion, DeliveryZone, ExchangePackage, MobileApiKey, MobileDevice, SurveyQuestion, SurveyQuestionOption
+from .models import ApiNonce, BusinessRegion, DeliveryZone, ExchangePackage, MobileApiKey, MobileDevice, Survey, SurveyQuestion, SurveyQuestionOption
 
 
 def response(data=None, status=200):
@@ -162,16 +162,19 @@ def directories(request):
 @require_GET
 @api_auth
 def survey_schema(request):
-    questions = []
-    for question in SurveyQuestion.objects.prefetch_related("options"):
-        questions.append({
-            "key": question.key,
-            "text": question.text,
-            "kind": question.kind,
-            "required": question.required,
-            "options": [option.text for option in question.options.all()],
-        })
-    return response({"questions": questions})
+    surveys = []
+    for survey in Survey.objects.prefetch_related("questions__options"):
+        questions = []
+        for question in survey.questions.all():
+            questions.append({
+                "key": question.key,
+                "text": question.text,
+                "kind": question.kind,
+                "required": question.required,
+                "options": [option.text for option in question.options.all()],
+            })
+        surveys.append({"key": survey.key, "name": survey.name, "description": survey.description, "questions": questions})
+    return response({"surveys": surveys})
 
 
 # ---------------------------------------------------------------------------
@@ -629,35 +632,47 @@ def local_directories_sync(request):
 @require_POST
 @local_api_auth
 def local_survey_schema_sync(request):
-    """Full replace of the question list the phone reads via /api/mobile/v1/survey-schema/,
-    the same pattern as local_directories_sync above."""
+    """Full replace of the survey/question list the phone reads via
+    /api/mobile/v1/survey-schema/, the same pattern as local_directories_sync above."""
     try:
         body = json.loads(request.body or b"{}")
-        questions = body.get("questions")
-        if not isinstance(questions, list):
+        surveys = body.get("surveys")
+        if not isinstance(surveys, list):
             raise ValueError()
     except (ValueError, TypeError, json.JSONDecodeError):
         return response({"error": "invalid_schema"}, 400)
     with transaction.atomic():
         SurveyQuestionOption.objects.all().delete()
         SurveyQuestion.objects.all().delete()
-        for index, item in enumerate(questions[:500]):
-            if not isinstance(item, dict):
+        Survey.objects.all().delete()
+        for survey_index, survey_item in enumerate(surveys[:200]):
+            if not isinstance(survey_item, dict):
                 continue
-            key = str(item.get("key") or "").strip()[:40]
-            text = str(item.get("text") or "").strip()
-            kind = str(item.get("kind") or "").strip()[:20]
-            if not key or not text or not kind:
+            survey_key = str(survey_item.get("key") or "").strip()[:40]
+            name = str(survey_item.get("name") or "").strip()[:200]
+            if not survey_key or not name:
                 continue
-            question = SurveyQuestion.objects.create(key=key, text=text, kind=kind, required=bool(item.get("required")), sort=int(item.get("sort") or index))
-            options = item.get("options") or []
-            if not isinstance(options, list):
+            survey = Survey.objects.create(key=survey_key, name=name, description=str(survey_item.get("description") or "").strip()[:500], sort=survey_index)
+            questions = survey_item.get("questions") or []
+            if not isinstance(questions, list):
                 continue
-            for oi, option_text in enumerate(options[:50]):
-                text = str(option_text or "").strip()[:200]
-                if text:
-                    SurveyQuestionOption.objects.create(question=question, text=text, sort=oi)
-    return response({"accepted": True, "questions": SurveyQuestion.objects.count()})
+            for index, item in enumerate(questions[:500]):
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("key") or "").strip()[:40]
+                text = str(item.get("text") or "").strip()
+                kind = str(item.get("kind") or "").strip()[:20]
+                if not key or not text or not kind:
+                    continue
+                question = SurveyQuestion.objects.create(survey=survey, key=key, text=text, kind=kind, required=bool(item.get("required")), sort=int(item.get("sort") or index))
+                options = item.get("options") or []
+                if not isinstance(options, list):
+                    continue
+                for oi, option_text in enumerate(options[:50]):
+                    text = str(option_text or "").strip()[:200]
+                    if text:
+                        SurveyQuestionOption.objects.create(question=question, text=text, sort=oi)
+    return response({"accepted": True, "surveys": Survey.objects.count()})
 
 
 @csrf_exempt

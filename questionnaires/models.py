@@ -29,10 +29,27 @@ class DeliveryZone(models.Model):
         return f"{self.region.name} · {self.name}"
 
 
+class Survey(models.Model):
+    """Read-only mirror of the local server's Survey, kept fresh by local_survey_schema_sync
+    (full replace) so a phone that can only reach VPS still gets the current list of "Опрос
+    клиентов"-family anketas via /api/mobile/v1/survey-schema/."""
+    key = models.CharField(max_length=40, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.CharField(max_length=500, blank=True)
+    sort = models.PositiveIntegerField(default=100)
+
+    class Meta:
+        ordering = ["sort", "id"]
+
+    def __str__(self):
+        return self.name
+
+
 class SurveyQuestion(models.Model):
     """Read-only mirror of the local server's SurveyQuestion, kept fresh by
     local_survey_schema_sync (full replace) so a phone that can only reach VPS still gets the
-    current "Опрос клиентов" question list via /api/mobile/v1/survey-schema/."""
+    current question list for each survey via /api/mobile/v1/survey-schema/."""
+    survey = models.ForeignKey(Survey, on_delete=models.CASCADE, related_name="questions")
     key = models.CharField(max_length=40, unique=True)
     text = models.TextField()
     kind = models.CharField(max_length=20)
