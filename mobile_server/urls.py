@@ -7,6 +7,8 @@ urlpatterns = [
     path("api/mobile/v1/directories/", views.directories),
     path("api/mobile/v1/version/", views.app_version),
     path("api/mobile/v1/download/", views.app_download),
+    path("download/apk/", views.public_download),
+    path("install/", views.install_page),
     path("api/mobile/v1/packages/", views.upload_package),
     path("api/mobile/v1/packages/status/", views.package_statuses),
     path("api/mobile/v1/packages/inbox/", views.mobile_inbox),

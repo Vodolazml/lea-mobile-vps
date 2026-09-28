@@ -194,6 +194,55 @@ def app_download(request):
     return FileResponse(open(path, "rb"), as_attachment=True, filename="lea-ankety.apk", content_type="application/vnd.android.package-archive")
 
 
+@require_GET
+def public_download(request):
+    """Unauthenticated twin of app_download, for the QR-code install flow: a brand-new phone
+    has no Bearer token yet, so the auth-gated endpoint (used by an already-installed app's own
+    update check) can't serve it its first copy. The APK itself carries no server secret — the
+    exchange key baked into it is already handed to anyone who installs the app regardless of
+    how they got the file — so gating this one buys no real protection, only blocks onboarding."""
+    from django.conf import settings as django_settings
+    from django.http import FileResponse, Http404
+    path = django_settings.RELEASES_DIR / "latest.apk"
+    if not path.exists():
+        raise Http404("no release published")
+    return FileResponse(open(path, "rb"), as_attachment=True, filename="lea-ankety.apk", content_type="application/vnd.android.package-archive")
+
+
+@require_GET
+def install_page(request):
+    """A small public landing page for the QR code on a printed/shared install sheet — nicer
+    than pointing the QR straight at the .apk (scanners behave inconsistently opening a raw
+    binary link directly), and it carries the one manual step Android always requires."""
+    from django.conf import settings as django_settings
+    import json as json_module
+    version_name = ""
+    try:
+        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+            version_name = str(json_module.load(handle).get("version_name") or "")
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    from django.http import HttpResponse
+    html = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ЛЭА мобильный офис</title>
+<style>
+body{{font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:#f3f3f3;color:#1d2029;margin:0;padding:24px}}
+.card{{max-width:420px;margin:40px auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 4px 20px rgba(0,0,0,.08)}}
+h1{{font-size:22px;margin:0 0 8px}}
+p{{color:#555;margin:0 0 20px}}
+a.button{{display:block;text-align:center;background:#328f4f;color:#fff;text-decoration:none;font-weight:700;padding:16px;border-radius:12px;font-size:17px}}
+.version{{color:#888;font-size:13px;margin-top:16px;text-align:center}}
+</style></head>
+<body><div class="card">
+<h1>ЛЭА мобильный офис</h1>
+<p>Нажмите кнопку, чтобы скачать приложение. После скачивания откройте файл и разрешите установку из этого источника, если Android попросит.</p>
+<a class="button" href="/download/apk/">Скачать APK</a>
+{f'<p class="version">Версия {version_name}</p>' if version_name else ''}
+</div></body></html>"""
+    return HttpResponse(html, content_type="text/html; charset=utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Encrypted package relay. The VPS only stores/forwards the opaque
 # encrypted_payload blob — it has no decryption key and never reads field

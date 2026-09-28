@@ -65,6 +65,31 @@ class MobileKeyAuthTests(TestCase):
     def test_app_download_requires_a_known_token(self):
         self.assertEqual(self.client.get("/api/mobile/v1/download/").status_code, 401)
 
+    def test_public_download_and_install_page_need_no_auth(self):
+        """The QR-code install flow: a brand-new phone has no Bearer token yet, so this must
+        work with no Authorization header at all, unlike the in-app update check above."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            releases = Path(tmp)
+            (releases / "version.json").write_text(json.dumps({"version_code": 36, "version_name": "2.27", "notes": "Автообновление"}), encoding="utf-8")
+            (releases / "latest.apk").write_bytes(b"fake-apk-bytes")
+            with patch("django.conf.settings.RELEASES_DIR", releases):
+                download = self.client.get("/download/apk/")
+                page = self.client.get("/install/")
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(b"".join(download.streaming_content), b"fake-apk-bytes")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"/download/apk/", page.content)
+        self.assertIn("2.27".encode(), page.content)
+
+    def test_public_download_404s_when_nothing_published(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            with patch("django.conf.settings.RELEASES_DIR", Path(tmp)):
+                self.assertEqual(self.client.get("/download/apk/").status_code, 404)
+
 
 class AdminKeyManagementTests(TestCase):
     def setUp(self):
