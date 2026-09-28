@@ -29,6 +29,32 @@ class DeliveryZone(models.Model):
         return f"{self.region.name} · {self.name}"
 
 
+class SurveyQuestion(models.Model):
+    """Read-only mirror of the local server's SurveyQuestion, kept fresh by
+    local_survey_schema_sync (full replace) so a phone that can only reach VPS still gets the
+    current "Опрос клиентов" question list via /api/mobile/v1/survey-schema/."""
+    key = models.CharField(max_length=40, unique=True)
+    text = models.TextField()
+    kind = models.CharField(max_length=20)
+    required = models.BooleanField(default=False)
+    sort = models.PositiveIntegerField(default=100)
+
+    class Meta:
+        ordering = ["sort", "id"]
+
+    def __str__(self):
+        return self.text[:60]
+
+
+class SurveyQuestionOption(models.Model):
+    question = models.ForeignKey(SurveyQuestion, on_delete=models.CASCADE, related_name="options")
+    text = models.CharField(max_length=200)
+    sort = models.PositiveIntegerField(default=100)
+
+    class Meta:
+        ordering = ["sort", "id"]
+
+
 class MobileApiKey(models.Model):
     """Allow-listed mobile Bearer tokens. Only the SHA-256 hash is stored, never the raw token."""
     token_hash = models.CharField(max_length=64, primary_key=True)

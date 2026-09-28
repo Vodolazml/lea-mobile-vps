@@ -452,6 +452,29 @@ class ExchangePackageRelayTests(TestCase):
         fetched = self.client.get("/api/mobile/v1/directories/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual([r["name"] for r in fetched.json()["regions"]], ["Крым"])
 
+    def test_local_survey_schema_sync_replaces_questions_and_options(self):
+        from questionnaires.models import SurveyQuestion
+
+        SurveyQuestion.objects.create(key="q_old", text="Устаревший вопрос", kind="text")
+        body = {"questions": [{"key": "q_new1", "text": "Нравится сервис?", "kind": "choice", "required": True, "sort": 0, "options": ["Да", "Нет"]}]}
+        result = self.client.post("/api/local/v1/survey-schema/sync/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(result.json()["questions"], 1)
+        question = SurveyQuestion.objects.get()
+        self.assertEqual(question.key, "q_new1")
+        self.assertTrue(question.required)
+        self.assertEqual(sorted(question.options.values_list("text", flat=True)), ["Да", "Нет"])
+
+        fetched = self.client.get("/api/mobile/v1/survey-schema/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(fetched.json()["questions"][0]["key"], "q_new1")
+        self.assertEqual(fetched.json()["questions"][0]["options"], ["Да", "Нет"])
+
+    def test_local_survey_schema_sync_requires_local_key(self):
+        self.assertEqual(self.client.post("/api/local/v1/survey-schema/sync/", "{}", content_type="application/json").status_code, 401)
+
+    def test_survey_schema_requires_auth(self):
+        self.assertEqual(self.client.get("/api/mobile/v1/survey-schema/").status_code, 401)
+
     def test_local_publish_release_updates_status_and_public_download(self):
         import base64
         import tempfile
