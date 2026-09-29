@@ -65,6 +65,16 @@ def request_body_bytes(request):
     return request.body or b""
 
 
+def read_app_version_headers(request):
+    """Sent by the app on every signed request (Api.request in Sync.kt)."""
+    try:
+        code = int(request.headers.get("X-LEA-App-Version-Code") or 0)
+    except (TypeError, ValueError):
+        code = 0
+    name = str(request.headers.get("X-LEA-App-Version-Name") or "")[:20]
+    return code, name
+
+
 def verify_signed_device_request(request):
     device_key = str(request.headers.get("X-LEA-Device-Key") or "").strip()
     timestamp = str(request.headers.get("X-LEA-Timestamp") or "").strip()
@@ -93,7 +103,13 @@ def verify_signed_device_request(request):
     except Exception:
         return False, "nonce_reused"
     device.last_seen_at = timezone.now()
-    device.save(update_fields=["last_seen_at"])
+    version_code, version_name = read_app_version_headers(request)
+    update_fields = ["last_seen_at"]
+    if version_code > 0:
+        device.app_version_code = version_code
+        device.app_version_name = version_name
+        update_fields += ["app_version_code", "app_version_name"]
+    device.save(update_fields=update_fields)
     request.mobile_device = device.device_key
     request.mobile_device_row = device
     return True, ""
@@ -275,6 +291,8 @@ def package_json(row):
         "device_key": row.device_key,
         "user_id": row.user_id,
         "target_token_hash": row.target_token_hash,
+        "app_version_code": row.app_version_code,
+        "app_version_name": row.app_version_name,
         "direction": row.direction,
         "channel": row.channel,
         "status": row.status,
@@ -319,6 +337,7 @@ def store_uploaded_package(request):
         if existing.object_uuid != object_uuid or existing.payload_hash != payload_hash:
             return None, response({"error": "conflict"}, 409)
         return existing, response({"accepted": True, "package": package_json(existing)})
+    version_code, version_name = read_app_version_headers(request)
     row = ExchangePackage.objects.create(
         package_uuid=package_uuid,
         object_uuid=object_uuid,
@@ -327,6 +346,8 @@ def store_uploaded_package(request):
         device_id=request.mobile_device,
         user_id=str(body.get("user_id") or request.mobile_user.get("id") or ""),
         target_token_hash=request.mobile_token_hash,
+        app_version_code=version_code,
+        app_version_name=version_name,
         direction="phone_to_vps",
         channel="vps",
         status="uploaded_to_vps",

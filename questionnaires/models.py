@@ -96,6 +96,8 @@ class MobileDevice(models.Model):
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)
+    app_version_code = models.PositiveIntegerField(default=0)
+    app_version_name = models.CharField(max_length=20, blank=True)
 
     class Meta:
         ordering = ["device_key"]
@@ -128,6 +130,8 @@ class ExchangePackage(models.Model):
     device_id = models.CharField(max_length=100, blank=True, db_index=True)
     user_id = models.CharField(max_length=100, blank=True, db_index=True)
     target_token_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    app_version_code = models.PositiveIntegerField(default=0)
+    app_version_name = models.CharField(max_length=20, blank=True)
     direction = models.CharField(max_length=40, default="phone_to_vps")
     status = models.CharField(max_length=50, default="uploaded_to_vps", db_index=True)
     channel = models.CharField(max_length=40, default="vps")

@@ -125,7 +125,7 @@ class ExchangePackageRelayTests(TestCase):
         self.encrypted_payload = "v1:opaque-ciphertext-nobody-on-vps-can-read"
         self.payload_hash = hashlib.sha256(self.encrypted_payload.encode()).hexdigest()
 
-    def signed_headers(self, path, body, idempotency=None):
+    def signed_headers(self, path, body, idempotency=None, app_version=None):
         timestamp = str(int(time.time() * 1000))
         nonce = str(uuid.uuid4())
         raw = json.dumps(body)
@@ -140,9 +140,12 @@ class ExchangePackageRelayTests(TestCase):
         }
         if idempotency:
             headers["HTTP_IDEMPOTENCY_KEY"] = idempotency
+        if app_version:
+            headers["HTTP_X_LEA_APP_VERSION_CODE"] = str(app_version[0])
+            headers["HTTP_X_LEA_APP_VERSION_NAME"] = app_version[1]
         return raw, headers
 
-    def upload(self):
+    def upload(self, app_version=None):
         body = {
             "package_uuid": self.package_uuid,
             "object_uuid": self.object_uuid,
@@ -153,8 +156,20 @@ class ExchangePackageRelayTests(TestCase):
             "payload_size": len(self.encrypted_payload),
             "encrypted_payload": self.encrypted_payload,
         }
-        raw, headers = self.signed_headers("/api/mobile/v1/packages/", body, self.package_uuid)
+        raw, headers = self.signed_headers("/api/mobile/v1/packages/", body, self.package_uuid, app_version=app_version)
         return self.client.post("/api/mobile/v1/packages/", raw, content_type="application/json", **headers)
+
+    def test_upload_records_the_sending_app_version_on_the_package_and_device(self):
+        result = self.upload(app_version=(45, "2.36"))
+        self.assertEqual(result.status_code, 201, result.content)
+        row = ExchangePackage.objects.get(package_uuid=self.package_uuid)
+        self.assertEqual(row.app_version_code, 45)
+        self.assertEqual(row.app_version_name, "2.36")
+        device = MobileDevice.objects.get(device_key="A7K3")
+        self.assertEqual(device.app_version_code, 45)
+        self.assertEqual(device.app_version_name, "2.36")
+        inbox = self.client.post("/api/local/v1/packages/inbox/", json.dumps({}), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(inbox.json()["packages"][0]["app_version_name"], "2.36")
 
     def test_package_lifecycle_keeps_the_log_row_but_wipes_payload_after_confirm(self):
         """VPS is the log of record (see mirror_vps_log on the local server) — the row and its
