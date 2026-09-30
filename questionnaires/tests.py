@@ -533,6 +533,28 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(device["app_version_code"], 49)
         self.assertGreater(device["last_seen_at"], 0)
 
+    def test_workflow_push_reaches_the_phone_through_its_package_status(self):
+        self.assertEqual(self.upload().status_code, 201)
+        result = self.client.post(
+            "/api/local/v1/packages/workflow/",
+            json.dumps({"states": [{"object_uuid": self.object_uuid, "workflow_status": "added_to_1c"}]}),
+            content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret",
+        )
+        self.assertEqual(result.json()["updated"], 1)
+        raw, headers = self.signed_headers("/api/mobile/v1/packages/status/", {"package_uuids": [self.package_uuid]})
+        status = self.client.post("/api/mobile/v1/packages/status/", raw, content_type="application/json", **headers)
+        self.assertEqual(status.json()["packages"][0]["workflow_status"], "added_to_1c")
+
+    def test_workflow_push_requires_local_key_and_ignores_unknown_states(self):
+        self.assertEqual(self.client.post("/api/local/v1/packages/workflow/", "{}", content_type="application/json").status_code, 401)
+        self.upload()
+        result = self.client.post(
+            "/api/local/v1/packages/workflow/",
+            json.dumps({"states": [{"object_uuid": self.object_uuid, "workflow_status": "deleted"}]}),
+            content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret",
+        )
+        self.assertEqual(result.json()["updated"], 0)
+
     def test_local_devices_requires_local_key(self):
         self.assertEqual(self.client.get("/api/local/v1/devices/").status_code, 401)
 

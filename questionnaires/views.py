@@ -315,6 +315,7 @@ def package_json(row):
         "target_token_hash": row.target_token_hash,
         "app_version_code": row.app_version_code,
         "app_version_name": row.app_version_name,
+        "workflow_status": row.workflow_status,
         "direction": row.direction,
         "channel": row.channel,
         "status": row.status,
@@ -750,6 +751,30 @@ def local_publish_release(request):
     with open(django_settings.RELEASES_DIR / "version.json", "w", encoding="utf-8") as handle:
         json.dump({"version_code": version_code, "version_name": version_name, "notes": notes, "published_at": ms(now)}, handle, ensure_ascii=False)
     return response({"accepted": True, "version_code": version_code, "version_name": version_name, "size": len(apk_bytes)}, 201)
+
+
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_packages_workflow(request):
+    """The local server's changes to where trade-point anketas stand in its own workflow (entered
+    into 1С, or that undone), keyed by the anketa's object_uuid — applied to every package that
+    carried it, so the phone's next status poll here picks it up."""
+    try:
+        states = json.loads(request.body or b"{}").get("states")
+        if not isinstance(states, list):
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        return response({"error": "invalid_workflow"}, 400)
+    updated = 0
+    for item in states[:1000]:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("workflow_status") or "")
+        if status not in {"in_review", "added_to_1c"}:
+            continue
+        updated += ExchangePackage.objects.filter(object_uuid=str(item.get("object_uuid") or ""), object_type="questionnaire").update(workflow_status=status)
+    return response({"accepted": True, "updated": updated})
 
 
 @require_GET

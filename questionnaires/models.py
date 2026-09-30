@@ -135,6 +135,9 @@ class ExchangePackage(models.Model):
     target_token_hash = models.CharField(max_length=64, blank=True, db_index=True)
     app_version_code = models.PositiveIntegerField(default=0)
     app_version_name = models.CharField(max_length=20, blank=True)
+    # Pushed by the local server once a trade-point anketa is entered into 1С ("added_to_1c"),
+    # or reverted ("in_review") — so a phone that only reaches VPS can show where it stands.
+    workflow_status = models.CharField(max_length=20, blank=True)
     direction = models.CharField(max_length=40, default="phone_to_vps")
     status = models.CharField(max_length=50, default="uploaded_to_vps", db_index=True)
     channel = models.CharField(max_length=40, default="vps")
