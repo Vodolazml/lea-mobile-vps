@@ -492,6 +492,16 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(fetched_survey["questions"][0]["key"], "q_new1")
         self.assertEqual(fetched_survey["questions"][0]["options"], ["Да", "Нет"])
 
+    def test_local_survey_schema_sync_carries_visibility_and_it_is_enforced_on_fetch(self):
+        body = {"surveys": [
+            {"key": "s_open", "name": "Для всех", "questions": []},
+            {"key": "s_closed", "name": "Только для одного", "questions": [], "visible_to_user_ids": ["someone-else"]},
+        ]}
+        result = self.client.post("/api/local/v1/survey-schema/sync/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(result.status_code, 200, result.content)
+        fetched = self.client.get("/api/mobile/v1/survey-schema/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual([s["key"] for s in fetched.json()["surveys"]], ["s_open"])
+
     def test_local_survey_schema_sync_requires_local_key(self):
         self.assertEqual(self.client.post("/api/local/v1/survey-schema/sync/", "{}", content_type="application/json").status_code, 401)
 

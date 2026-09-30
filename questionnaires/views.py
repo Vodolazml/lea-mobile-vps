@@ -178,8 +178,12 @@ def directories(request):
 @require_GET
 @api_auth
 def survey_schema(request):
+    current_user_id = str(request.mobile_user.get("id") or "")
     surveys = []
     for survey in Survey.objects.prefetch_related("questions__options"):
+        allowed_ids = {str(uid) for uid in (survey.visible_to_user_ids or [])}
+        if allowed_ids and current_user_id not in allowed_ids:
+            continue
         questions = []
         for question in survey.questions.all():
             questions.append({
@@ -673,7 +677,9 @@ def local_survey_schema_sync(request):
             name = str(survey_item.get("name") or "").strip()[:200]
             if not survey_key or not name:
                 continue
-            survey = Survey.objects.create(key=survey_key, name=name, description=str(survey_item.get("description") or "").strip()[:500], sort=survey_index)
+            raw_visible_to = survey_item.get("visible_to_user_ids") or []
+            visible_to_user_ids = [str(uid)[:100] for uid in raw_visible_to][:500] if isinstance(raw_visible_to, list) else []
+            survey = Survey.objects.create(key=survey_key, name=name, description=str(survey_item.get("description") or "").strip()[:500], sort=survey_index, visible_to_user_ids=visible_to_user_ids)
             questions = survey_item.get("questions") or []
             if not isinstance(questions, list):
                 continue

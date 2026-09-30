@@ -37,6 +37,9 @@ class Survey(models.Model):
     name = models.CharField(max_length=200)
     description = models.CharField(max_length=500, blank=True)
     sort = models.PositiveIntegerField(default=100)
+    # Mirrors the local server's Survey.visible_to_user_ids — empty means everyone, matching the
+    # same "opt-in restriction, not opt-in visibility" default there.
+    visible_to_user_ids = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["sort", "id"]
