@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import timedelta
 from functools import wraps
@@ -175,10 +176,19 @@ def directories(request):
     return response({"regions": regions})
 
 
+def staff_id_for_request(request):
+    """The payroll staff id behind this phone — the id visible_to_user_ids is written in. Keys
+    pushed by the local server are labelled "staff-<id>-<name>" (see sync_vps_exchange), so on VPS
+    mobile_user["id"] is that whole label, not the bare id the local server resolves to."""
+    raw = str(request.mobile_user.get("id") or "")
+    match = re.match(r"^staff-(\d+)-", raw)
+    return match.group(1) if match else raw
+
+
 @require_GET
 @api_auth
 def survey_schema(request):
-    current_user_id = str(request.mobile_user.get("id") or "")
+    current_user_id = staff_id_for_request(request)
     surveys = []
     for survey in Survey.objects.prefetch_related("questions__options"):
         allowed_ids = {str(uid) for uid in (survey.visible_to_user_ids or [])}

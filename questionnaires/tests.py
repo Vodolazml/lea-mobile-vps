@@ -502,6 +502,19 @@ class ExchangePackageRelayTests(TestCase):
         fetched = self.client.get("/api/mobile/v1/survey-schema/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual([s["key"] for s in fetched.json()["surveys"]], ["s_open"])
 
+    def test_restricted_survey_is_shown_to_a_listed_staff_member_whose_key_has_the_real_label(self):
+        """Keys pushed by the local server are labelled "staff-<id>-<name>" — the survey list holds
+        the bare id, so the match has to be on the id inside that label, not the label itself."""
+        staff_token = "staff-phone-token"
+        MobileApiKey.objects.create(token_hash=hashlib.sha256(staff_token.encode()).hexdigest(), label="staff-140-Водолазский Руслан", active=True)
+        body = {"surveys": [
+            {"key": "s_closed", "name": "Только для 140", "questions": [], "visible_to_user_ids": ["140"]},
+            {"key": "s_other", "name": "Только для 85", "questions": [], "visible_to_user_ids": ["85"]},
+        ]}
+        self.client.post("/api/local/v1/survey-schema/sync/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        fetched = self.client.get("/api/mobile/v1/survey-schema/", HTTP_AUTHORIZATION=f"Bearer {staff_token}")
+        self.assertEqual([s["key"] for s in fetched.json()["surveys"]], ["s_closed"])
+
     def test_local_survey_schema_sync_requires_local_key(self):
         self.assertEqual(self.client.post("/api/local/v1/survey-schema/sync/", "{}", content_type="application/json").status_code, 401)
 
