@@ -152,7 +152,15 @@ def register_device(request):
         return response({"error": "device_user_mismatch"}, 409)
     device.last_seen_at = timezone.now()
     device.public_name = public_name or device.public_name
-    device.save(update_fields=["last_seen_at", "public_name"])
+    update_fields = ["last_seen_at", "public_name"]
+    # Registration runs on every sync cycle whether or not there's anything to upload, so this
+    # is what keeps the installed version current even for a phone that sends no anketas.
+    version_code, version_name = read_app_version_headers(request)
+    if version_code > 0:
+        device.app_version_code = version_code
+        device.app_version_name = version_name
+        update_fields += ["app_version_code", "app_version_name"]
+    device.save(update_fields=update_fields)
     return response({"accepted": True, "device_key": device.device_key, "created": created})
 
 
@@ -742,6 +750,28 @@ def local_publish_release(request):
     with open(django_settings.RELEASES_DIR / "version.json", "w", encoding="utf-8") as handle:
         json.dump({"version_code": version_code, "version_name": version_name, "notes": notes, "published_at": ms(now)}, handle, ensure_ascii=False)
     return response({"accepted": True, "version_code": version_code, "version_name": version_name, "size": len(apk_bytes)}, 201)
+
+
+@require_GET
+@local_api_auth
+def local_devices(request):
+    """Every phone's installed app version and when it last checked in, for the local server's
+    "Пользователи" page — a phone working off the office network only ever reports to VPS, so
+    without this the office has no idea what it's running. staff_id is the bare payroll id,
+    pulled out of the "staff-<id>-<name>" key label the same way survey_schema does."""
+    devices = []
+    for device in MobileDevice.objects.all():
+        match = re.match(r"^staff-(\d+)-", device.user_id or "")
+        devices.append({
+            "device_key": device.device_key,
+            "staff_id": match.group(1) if match else "",
+            "public_name": device.public_name,
+            "active": device.active,
+            "app_version_code": device.app_version_code,
+            "app_version_name": device.app_version_name,
+            "last_seen_at": ms(device.last_seen_at),
+        })
+    return response({"devices": devices})
 
 
 @require_GET

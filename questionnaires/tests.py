@@ -515,6 +515,27 @@ class ExchangePackageRelayTests(TestCase):
         fetched = self.client.get("/api/mobile/v1/survey-schema/", HTTP_AUTHORIZATION=f"Bearer {staff_token}")
         self.assertEqual([s["key"] for s in fetched.json()["surveys"]], ["s_closed"])
 
+    def test_device_registration_records_installed_version_and_local_devices_reports_it(self):
+        """Registration runs every sync cycle even with nothing to upload, so it's what keeps the
+        installed version current — and the office reads it back by bare staff id."""
+        staff_token = "staff-token-for-devices"
+        MobileApiKey.objects.create(token_hash=hashlib.sha256(staff_token.encode()).hexdigest(), label="staff-140-Водолазский Руслан", active=True)
+        body = {"device_key": "B9X2", "secret_hash": "c" * 64, "public_name": "Pixel 7"}
+        result = self.client.post(
+            "/api/mobile/v1/device/register/", json.dumps(body), content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {staff_token}", HTTP_X_LEA_APP_VERSION_CODE="49", HTTP_X_LEA_APP_VERSION_NAME="2.40",
+        )
+        self.assertEqual(result.status_code, 200, result.content)
+        devices = self.client.get("/api/local/v1/devices/", HTTP_X_LEA_LOCAL_KEY="local-secret").json()["devices"]
+        device = next(d for d in devices if d["device_key"] == "B9X2")
+        self.assertEqual(device["staff_id"], "140")
+        self.assertEqual(device["app_version_name"], "2.40")
+        self.assertEqual(device["app_version_code"], 49)
+        self.assertGreater(device["last_seen_at"], 0)
+
+    def test_local_devices_requires_local_key(self):
+        self.assertEqual(self.client.get("/api/local/v1/devices/").status_code, 401)
+
     def test_local_survey_schema_sync_requires_local_key(self):
         self.assertEqual(self.client.post("/api/local/v1/survey-schema/sync/", "{}", content_type="application/json").status_code, 401)
 
