@@ -20,5 +20,5 @@ TIME_ZONE = "Europe/Simferopol"
 LANGUAGE_CODE = "ru-ru"
 # Encrypted package payloads can be sizeable (photos are embedded as base64); keep this
 # above the 60 MB manual cap enforced in questionnaires.views.store_uploaded_package.
-DATA_UPLOAD_MAX_MEMORY_SIZE = 67108864
+DATA_UPLOAD_MAX_MEMORY_SIZE = 419430400
 X_FRAME_OPTIONS = "DENY"

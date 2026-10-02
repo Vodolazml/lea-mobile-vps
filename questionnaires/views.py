@@ -338,7 +338,7 @@ def store_uploaded_package(request):
     if request.content_type != "application/json":
         return None, response({"error": "json_required"}, 415)
     try:
-        if len(request.body) > 60 * 1024 * 1024:
+        if len(request.body) > 400 * 1024 * 1024:
             return None, response({"error": "too_large"}, 413)
         body = json.loads(request.body)
         package_uuid = valid_sync_id(body.get("package_uuid"))
@@ -459,7 +459,9 @@ def local_confirm(request):
                 row.confirmed_by_local_at = now
                 row.encrypted_payload = ""
                 row.payload_deleted_at = now
-                row.error = ""
+                # Normally empty; for a forced upload the local server sends its note about what
+                # checks the anketa failed, and it belongs in the log.
+                row.error = str(item.get("error") or "")[:1000]
                 row.save(update_fields=["status", "confirmed_by_local_at", "encrypted_payload", "payload_deleted_at", "error"])
             elif status in {"conflict_on_local_server", "manual_review_required"}:
                 row.status = status
@@ -481,7 +483,7 @@ def local_outbox(request):
     if request.content_type != "application/json":
         return response({"error": "json_required"}, 415)
     try:
-        if len(request.body) > 60 * 1024 * 1024:
+        if len(request.body) > 400 * 1024 * 1024:
             return response({"error": "too_large"}, 413)
         body = json.loads(request.body)
         package_uuid = valid_sync_id(body.get("package_uuid"))
