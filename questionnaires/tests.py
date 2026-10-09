@@ -610,3 +610,85 @@ class ExchangePackageRelayTests(TestCase):
         self.assertEqual(result.json()["deleted"], 1)
         remaining = set(ExchangePackage.objects.values_list("package_uuid", flat=True))
         self.assertEqual(remaining, {"RECENT-DONE", "OLD-PENDING", "OLD-CONFLICT"})
+
+
+class CatalogPackageTests(TestCase):
+    """questionnaires/catalog.py: office pushes full + change packages, phones fetch by version."""
+
+    def setUp(self):
+        self.env = patch.dict(os.environ, {"LEA_MOBILE_LOCAL_API_KEY": "local-secret"})
+        self.env.start()
+        self.token = "phone-token"
+        MobileApiKey.objects.create(token_hash=hashlib.sha256(self.token.encode()).hexdigest(), label="staff-7-Тест", active=True)
+
+    def tearDown(self):
+        self.env.stop()
+
+    @staticmethod
+    def pack(data):
+        import base64, gzip
+        return base64.b64encode(gzip.compress(json.dumps(data, ensure_ascii=False).encode("utf-8"))).decode("ascii")
+
+    def publish(self, version, full_products, delta=None, from_version=None):
+        body = {"version": version, "full": self.pack({"service": "lea-mobile-catalog", "version": version, "full": True, "groups": [["g", "Крепёж", ""]], "warehouses": [], "products": full_products, "remove": []})}
+        if delta is not None:
+            body["from"] = from_version
+            body["delta"] = self.pack({"service": "lea-mobile-catalog", "version": version, "full": False, "groups": [["g", "Крепёж", ""]], "warehouses": [], **delta})
+        return self.client.post("/api/local/v1/catalog/publish/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+
+    def fetch(self, since):
+        import gzip
+        r = self.client.get(f"/api/mobile/v1/catalog/?since={since}", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(r.status_code, 200)
+        body = gzip.decompress(r.content) if r.get("Content-Encoding") == "gzip" else r.content
+        return json.loads(body)
+
+    def product(self, pid, price="10"):
+        return {"i": pid, "n": f"Товар {pid}", "g": "g", "u": "Штука", "p": price}
+
+    def big_catalog(self, extra=()):
+        # Big enough that a couple of changes weigh less than the whole catalog.
+        return [self.product(f"p{n}") for n in range(300)] + list(extra)
+
+    def test_empty_before_first_publish(self):
+        self.assertTrue(self.fetch(0)["empty"])
+
+    def test_first_download_is_full_then_only_changes(self):
+        self.assertEqual(self.publish(1, self.big_catalog()).status_code, 201)
+        first = self.fetch(0)
+        self.assertTrue(first["full"])
+        self.assertEqual((first["version"], len(first["products"])), (1, 300))
+        self.assertTrue(self.fetch(1)["up_to_date"])
+        # v2: p1 re-priced, p2 hidden; v3: p300 new.
+        self.assertEqual(self.publish(2, self.big_catalog(), {"products": [self.product("p1", "12")], "remove": ["p2"]}, 1).json()["stored"], "full+delta")
+        self.publish(3, self.big_catalog([self.product("p300")]), {"products": [self.product("p300")], "remove": []}, 2)
+        changes = self.fetch(1)
+        self.assertFalse(changes["full"])
+        self.assertEqual((changes["version"], changes["from"]), (3, 1))
+        self.assertEqual(sorted(p["i"] for p in changes["products"]), ["p1", "p300"])
+        self.assertEqual(changes["remove"], ["p2"])
+        self.assertEqual(self.fetch(2)["products"], [self.product("p300")])
+
+    def test_later_change_wins_over_earlier(self):
+        self.publish(1, self.big_catalog())
+        self.publish(2, self.big_catalog(), {"products": [], "remove": ["p5"]}, 1)
+        self.publish(3, self.big_catalog(), {"products": [self.product("p5", "99")], "remove": []}, 2)
+        changes = self.fetch(1)
+        self.assertEqual(changes["remove"], [])
+        self.assertEqual(changes["products"], [self.product("p5", "99")])
+
+    def test_broken_chain_or_unknown_version_gets_full(self):
+        self.publish(1, self.big_catalog())
+        # Office pushed v3 with changes since v2, but VPS never had v2 — not chained.
+        self.assertEqual(self.publish(3, self.big_catalog(), {"products": [], "remove": []}, 2).json()["stored"], "full")
+        self.assertTrue(self.fetch(1)["full"])
+        self.assertTrue(self.fetch(99)["full"])
+
+    def test_auth_required(self):
+        self.publish(1, self.big_catalog())
+        self.assertEqual(self.client.get("/api/mobile/v1/catalog/?since=0").status_code, 401)
+        self.assertEqual(self.client.post("/api/local/v1/catalog/publish/", "{}", content_type="application/json").status_code, 401)
+
+    def test_bad_package_rejected(self):
+        body = {"version": 1, "full": "bm90IGd6aXA="}
+        self.assertEqual(self.client.post("/api/local/v1/catalog/publish/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret").status_code, 400)

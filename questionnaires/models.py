@@ -160,3 +160,18 @@ class ExchangePackage(models.Model):
     @property
     def payload_present(self):
         return bool(self.encrypted_payload)
+
+
+class CatalogPackage(models.Model):
+    """The 1С catalog for phones (questionnaires/catalog.py): one "full" package for the
+    current version, plus "delta" packages of changes from_version → to_version forming a
+    chain. data is the gzipped JSON exactly as the office server built it."""
+    kind = models.CharField(max_length=10)
+    from_version = models.BigIntegerField(default=0)
+    to_version = models.BigIntegerField(db_index=True)
+    data = models.BinaryField()
+    size = models.BigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["kind", "from_version", "to_version"], name="unique_catalog_package")]

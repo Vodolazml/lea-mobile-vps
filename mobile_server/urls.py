@@ -1,11 +1,12 @@
 from django.urls import path
-from questionnaires import views
+from questionnaires import catalog, views
 
 urlpatterns = [
     path("api/mobile/v1/health/", views.health),
     path("api/mobile/v1/device/register/", views.register_device),
     path("api/mobile/v1/directories/", views.directories),
     path("api/mobile/v1/survey-schema/", views.survey_schema),
+    path("api/mobile/v1/catalog/", catalog.mobile_catalog),
     path("api/mobile/v1/version/", views.app_version),
     path("api/mobile/v1/download/", views.app_download),
     path("download/apk/", views.public_download),
@@ -21,6 +22,8 @@ urlpatterns = [
     path("api/local/v1/logs/", views.technical_logs),
     path("api/local/v1/directories/sync/", views.local_directories_sync),
     path("api/local/v1/survey-schema/sync/", views.local_survey_schema_sync),
+    path("api/local/v1/catalog/publish/", catalog.local_catalog_publish),
+    path("api/local/v1/catalog/status/", catalog.local_catalog_status),
     path("api/local/v1/release/publish/", views.local_publish_release),
     path("api/local/v1/release/status/", views.local_release_status),
     path("api/local/v1/devices/", views.local_devices),
