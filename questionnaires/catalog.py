@@ -119,3 +119,65 @@ def local_catalog_status(request):
     full = CatalogPackage.objects.filter(kind="full").order_by("-to_version").first()
     deltas = CatalogPackage.objects.filter(kind="delta").count()
     return response({"version": full.to_version if full else 0, "full_size": full.size if full else 0, "deltas": deltas})
+
+
+# ---------------------------------------------------------------------------------------------
+# Product pictures: the office sends each picture once as a thumbnail and a card-sized JPEG
+# (server_mobile catalog_images.py); phones fetch them by key only when they show them.
+# ---------------------------------------------------------------------------------------------
+
+def _image_dir():
+    from django.conf import settings
+    path = settings.CATALOG_IMAGES_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _valid_key(key: str) -> bool:
+    return 8 <= len(key) <= 40 and all(c in "0123456789abcdef" for c in key)
+
+
+@csrf_exempt
+@require_POST
+@local_api_auth
+def local_catalog_images(request):
+    try:
+        items = json.loads(request.body or b"{}").get("images")
+        if not isinstance(items, list):
+            raise ValueError()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return response({"error": "invalid_images"}, 400)
+    stored = 0
+    folder = _image_dir()
+    for item in items:
+        key = str(item.get("key") or "")
+        if not _valid_key(key):
+            continue
+        try:
+            thumb = base64.b64decode(str(item.get("thumb") or ""), validate=True)
+            full = base64.b64decode(str(item.get("full") or ""), validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if not thumb.startswith(b"\xff\xd8") or not full.startswith(b"\xff\xd8"):
+            continue  # only JPEGs, as the office makes them
+        for suffix, data in (("t", thumb), ("f", full)):
+            tmp = folder / f"{key}_{suffix}.jpg.part"
+            tmp.write_bytes(data)
+            tmp.replace(folder / f"{key}_{suffix}.jpg")
+        stored += 1
+    return response({"accepted": True, "stored": stored}, 201)
+
+
+@require_GET
+@api_auth
+def mobile_catalog_image(request, key, size):
+    from django.http import FileResponse, Http404
+    if not _valid_key(key) or size not in ("t", "f"):
+        raise Http404("bad key")
+    path = _image_dir() / f"{key}_{size}.jpg"
+    if not path.is_file():
+        raise Http404("no picture")
+    reply = FileResponse(open(path, "rb"), content_type="image/jpeg")
+    # The key changes whenever the picture does — phones may keep it forever.
+    reply["Cache-Control"] = "private, max-age=31536000, immutable"
+    return reply

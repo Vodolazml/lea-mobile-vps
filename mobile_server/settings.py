@@ -14,6 +14,8 @@ Path(DATABASES["default"]["NAME"]).parent.mkdir(parents=True, exist_ok=True)
 # see questionnaires.views.app_version/app_download and deploy/publish_release.sh.
 RELEASES_DIR = Path(os.environ.get("LEA_MOBILE_RELEASES_DIR", str(BASE_DIR / "releases")))
 RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+# Product pictures for phones (questionnaires/catalog.py) — thumbnail + card size per picture.
+CATALOG_IMAGES_DIR = Path(os.environ.get("LEA_MOBILE_CATALOG_IMAGES_DIR", str(BASE_DIR / "catalog_images")))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 TIME_ZONE = "Europe/Simferopol"

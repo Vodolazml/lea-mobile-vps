@@ -692,3 +692,39 @@ class CatalogPackageTests(TestCase):
     def test_bad_package_rejected(self):
         body = {"version": 1, "full": "bm90IGd6aXA="}
         self.assertEqual(self.client.post("/api/local/v1/catalog/publish/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret").status_code, 400)
+
+
+class CatalogImageTests(TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from django.test import override_settings
+        self.tmp = tempfile.TemporaryDirectory()
+        self.override = override_settings(CATALOG_IMAGES_DIR=Path(self.tmp.name))
+        self.override.enable()
+        self.env = patch.dict(os.environ, {"LEA_MOBILE_LOCAL_API_KEY": "local-secret"})
+        self.env.start()
+        self.token = "phone-token"
+        MobileApiKey.objects.create(token_hash=hashlib.sha256(self.token.encode()).hexdigest(), label="staff-7-Тест", active=True)
+
+    def tearDown(self):
+        self.env.stop()
+        self.override.disable()
+        self.tmp.cleanup()
+
+    def test_upload_then_phone_downloads(self):
+        import base64
+        thumb, full = b"\xff\xd8thumb", b"\xff\xd8full"
+        body = {"images": [
+            {"key": "0423189cb6a19b40b452", "thumb": base64.b64encode(thumb).decode(), "full": base64.b64encode(full).decode()},
+            {"key": "../../etc", "thumb": "", "full": ""},
+            {"key": "abcdef0123", "thumb": base64.b64encode(b"GIF89a").decode(), "full": base64.b64encode(b"x").decode()},
+        ]}
+        r = self.client.post("/api/local/v1/catalog/images/", json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+        self.assertEqual(r.json()["stored"], 1)
+        got = self.client.get("/api/mobile/v1/catalog/image/0423189cb6a19b40b452/t/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(b"".join(got.streaming_content), thumb)
+        got = self.client.get("/api/mobile/v1/catalog/image/0423189cb6a19b40b452/f/", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(b"".join(got.streaming_content), full)
+        self.assertEqual(self.client.get("/api/mobile/v1/catalog/image/abcdef0123/t/", HTTP_AUTHORIZATION=f"Bearer {self.token}").status_code, 404)
+        self.assertEqual(self.client.get("/api/mobile/v1/catalog/image/0423189cb6a19b40b452/t/").status_code, 401)
