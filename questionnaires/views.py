@@ -348,7 +348,7 @@ def store_uploaded_package(request):
         encrypted_payload = str(body.get("encrypted_payload") or "")
         payload_hash = str(body.get("payload_hash") or "")
         payload_size = int(body.get("payload_size") or len(encrypted_payload))
-        if object_type not in {"questionnaire", "opros", "visit", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
+        if object_type not in {"questionnaire", "opros", "visit", "restore_request", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
             raise ValueError()
         if request.headers.get("Idempotency-Key") != package_uuid:
             raise ValueError()
@@ -551,16 +551,30 @@ def local_outbox(request):
 @api_auth
 def mobile_inbox(request):
     """The phone polls for packages the local server addressed to its own token hash."""
+    return _inbox_rows(request, restore=False)
+
+
+def _inbox_rows(request, restore):
+    """Restore items ("Восстановить данные") have their own inbox: polling the general one for
+    some other answer marks everything it returns as delivered, which would swallow them."""
     now = timezone.now()
-    rows = list(ExchangePackage.objects.filter(
+    rows = ExchangePackage.objects.filter(
         direction="local_to_phone", target_token_hash=request.mobile_token_hash,
         status="uploaded_to_vps", encrypted_payload__gt="",
-    ).order_by("created_at")[:50])
+    )
+    rows = rows.filter(object_type="restore_item") if restore else rows.exclude(object_type="restore_item")
+    rows = list(rows.order_by("created_at")[:20 if restore else 50])
     for row in rows:
         row.status = "downloaded_by_phone"
         row.delivered_to_phone_at = now
         row.save(update_fields=["status", "delivered_to_phone_at"])
     return response({"packages": [{**package_json(row), "encrypted_payload": row.encrypted_payload} for row in rows]})
+
+
+@require_GET
+@api_auth
+def mobile_restore_inbox(request):
+    return _inbox_rows(request, restore=True)
 
 
 @csrf_exempt

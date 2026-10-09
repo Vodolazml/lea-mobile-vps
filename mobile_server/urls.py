@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/mobile/v1/packages/status/", views.package_statuses),
     path("api/mobile/v1/packages/inbox/", views.mobile_inbox),
     path("api/mobile/v1/packages/ack/", views.mobile_ack),
+    path("api/mobile/v1/restore/inbox/", views.mobile_restore_inbox),
     path("api/local/v1/packages/inbox/", views.local_inbox),
     path("api/local/v1/packages/confirm/", views.local_confirm),
     path("api/local/v1/packages/confirm-direct/", views.local_confirm_direct),

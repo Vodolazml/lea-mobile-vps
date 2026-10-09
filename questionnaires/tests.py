@@ -728,3 +728,20 @@ class CatalogImageTests(TestCase):
         self.assertEqual(b"".join(got.streaming_content), full)
         self.assertEqual(self.client.get("/api/mobile/v1/catalog/image/abcdef0123/t/", HTTP_AUTHORIZATION=f"Bearer {self.token}").status_code, 404)
         self.assertEqual(self.client.get("/api/mobile/v1/catalog/image/0423189cb6a19b40b452/t/").status_code, 401)
+
+
+class RestoreInboxTests(TestCase):
+    def setUp(self):
+        self.token = "phone-token"
+        self.hash = hashlib.sha256(self.token.encode()).hexdigest()
+        MobileApiKey.objects.create(token_hash=self.hash, label="staff-7-Тест", active=True)
+        for uuid_, kind in (("grant-1", "identity_response"), ("RST-AAAA-00001", "restore_item"), ("RST-AAAA-DONE", "restore_item")):
+            ExchangePackage.objects.create(package_uuid=uuid_, object_uuid=uuid_, object_type=kind, device_key="", direction="local_to_phone",
+                                           target_token_hash=self.hash, status="uploaded_to_vps", payload_hash="x" * 64, encrypted_payload="v1:abc")
+
+    def test_restore_items_only_in_their_own_inbox(self):
+        general = self.client.get("/api/mobile/v1/packages/inbox/", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["packages"]
+        self.assertEqual([p["object_type"] for p in general], ["identity_response"])
+        restore = self.client.get("/api/mobile/v1/restore/inbox/", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["packages"]
+        self.assertEqual(sorted(p["package_uuid"] for p in restore), ["RST-AAAA-00001", "RST-AAAA-DONE"])
+        self.assertEqual(self.client.get("/api/mobile/v1/restore/inbox/", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()["packages"], [])
