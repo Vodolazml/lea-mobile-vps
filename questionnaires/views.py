@@ -222,13 +222,24 @@ def survey_schema(request):
 # missing or unreadable just means "no update", never an error.
 # ---------------------------------------------------------------------------
 
+def releases_dir(channel="stable"):
+    """Two release channels: "stable" — the main app (com.example.lea), files right in
+    RELEASES_DIR; "test" — the test app (com.example.lea.v2), in RELEASES_DIR/test. Both can be
+    installed on one phone, each updating from its own."""
+    from django.conf import settings as django_settings
+    return django_settings.RELEASES_DIR / "test" if channel == "test" else django_settings.RELEASES_DIR
+
+
+def apk_name(channel):
+    return "lea-test.apk" if channel == "test" else "lea-ankety.apk"
+
+
 @require_GET
 @api_auth
-def app_version(request):
-    from django.conf import settings as django_settings
+def app_version(request, channel="stable"):
     import json as json_module
     try:
-        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+        with open(releases_dir(channel) / "version.json", "r", encoding="utf-8") as handle:
             info = json_module.load(handle)
         return response({
             "version_code": int(info.get("version_code") or 0),
@@ -241,40 +252,37 @@ def app_version(request):
 
 @require_GET
 @api_auth
-def app_download(request):
-    from django.conf import settings as django_settings
+def app_download(request, channel="stable"):
     from django.http import FileResponse, Http404
-    path = django_settings.RELEASES_DIR / "latest.apk"
+    path = releases_dir(channel) / "latest.apk"
     if not path.exists():
         raise Http404("no release published")
-    return FileResponse(open(path, "rb"), as_attachment=True, filename="lea-ankety.apk", content_type="application/vnd.android.package-archive")
+    return FileResponse(open(path, "rb"), as_attachment=True, filename=apk_name(channel), content_type="application/vnd.android.package-archive")
 
 
 @require_GET
-def public_download(request):
+def public_download(request, channel="stable"):
     """Unauthenticated twin of app_download, for the QR-code install flow: a brand-new phone
     has no Bearer token yet, so the auth-gated endpoint (used by an already-installed app's own
     update check) can't serve it its first copy. The APK itself carries no server secret — the
     exchange key baked into it is already handed to anyone who installs the app regardless of
     how they got the file — so gating this one buys no real protection, only blocks onboarding."""
-    from django.conf import settings as django_settings
     from django.http import FileResponse, Http404
-    path = django_settings.RELEASES_DIR / "latest.apk"
+    path = releases_dir(channel) / "latest.apk"
     if not path.exists():
         raise Http404("no release published")
-    return FileResponse(open(path, "rb"), as_attachment=True, filename="lea-ankety.apk", content_type="application/vnd.android.package-archive")
+    return FileResponse(open(path, "rb"), as_attachment=True, filename=apk_name(channel), content_type="application/vnd.android.package-archive")
 
 
 @require_GET
-def install_page(request):
+def install_page(request, channel="stable"):
     """A small public landing page for the QR code on a printed/shared install sheet — nicer
     than pointing the QR straight at the .apk (scanners behave inconsistently opening a raw
     binary link directly), and it carries the one manual step Android always requires."""
-    from django.conf import settings as django_settings
     import json as json_module
     version_name = ""
     try:
-        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+        with open(releases_dir(channel) / "version.json", "r", encoding="utf-8") as handle:
             version_name = str(json_module.load(handle).get("version_name") or "")
     except (FileNotFoundError, ValueError, OSError):
         pass
@@ -291,9 +299,9 @@ a.button{{display:block;text-align:center;background:#328f4f;color:#fff;text-dec
 .version{{color:#888;font-size:13px;margin-top:16px;text-align:center}}
 </style></head>
 <body><div class="card">
-<h1>ЛЭА мобильный офис</h1>
+<h1>ЛЭА мобильный офис{" · тестовая версия" if channel == "test" else ""}</h1>
 <p>Нажмите кнопку, чтобы скачать приложение. После скачивания откройте файл и разрешите установку из этого источника, если Android попросит.</p>
-<a class="button" href="/download/apk/">Скачать APK</a>
+<a class="button" href="/download/apk/{"test/" if channel == "test" else ""}">Скачать APK</a>
 {f'<p class="version">Версия {version_name}</p>' if version_name else ''}
 </div></body></html>"""
     return HttpResponse(html, content_type="text/html; charset=utf-8")
@@ -764,6 +772,7 @@ def local_publish_release(request):
     reachable from anywhere, not just the office LAN."""
     try:
         body = json.loads(request.body or b"{}")
+        channel = "test" if body.get("channel") == "test" else "stable"
         version_code = int(body.get("version_code") or 0)
         version_name = str(body.get("version_name") or "").strip()[:40]
         notes = str(body.get("notes") or "").strip()[:2000]
@@ -775,14 +784,15 @@ def local_publish_release(request):
             raise ValueError()
     except (ValueError, TypeError, json.JSONDecodeError, binascii.Error, UnicodeEncodeError):
         return response({"error": "invalid_release"}, 400)
-    from django.conf import settings as django_settings
-    django_settings.RELEASES_DIR.mkdir(parents=True, exist_ok=True)
-    with open(django_settings.RELEASES_DIR / "latest.apk", "wb") as handle:
+    folder = releases_dir(channel)
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(folder / "latest.apk.part", "wb") as handle:
         handle.write(apk_bytes)
+    (folder / "latest.apk.part").replace(folder / "latest.apk")
     now = timezone.now()
-    with open(django_settings.RELEASES_DIR / "version.json", "w", encoding="utf-8") as handle:
+    with open(folder / "version.json", "w", encoding="utf-8") as handle:
         json.dump({"version_code": version_code, "version_name": version_name, "notes": notes, "published_at": ms(now)}, handle, ensure_ascii=False)
-    return response({"accepted": True, "version_code": version_code, "version_name": version_name, "size": len(apk_bytes)}, 201)
+    return response({"accepted": True, "channel": channel, "version_code": version_code, "version_name": version_name, "size": len(apk_bytes)}, 201)
 
 
 @csrf_exempt
@@ -838,9 +848,9 @@ def local_release_status(request):
     separate from api/mobile/v1/version/ because that one's phone-facing (Bearer token auth)
     and this is the trusted local-server channel (X-LEA-Local-Key), like every other local_*
     endpoint here."""
-    from django.conf import settings as django_settings
+    channel = "test" if request.GET.get("channel") == "test" else "stable"
     try:
-        with open(django_settings.RELEASES_DIR / "version.json", "r", encoding="utf-8") as handle:
+        with open(releases_dir(channel) / "version.json", "r", encoding="utf-8") as handle:
             info = json.load(handle)
     except (FileNotFoundError, ValueError, OSError):
         return response({"version_code": 0, "version_name": "", "notes": "", "published_at": 0})

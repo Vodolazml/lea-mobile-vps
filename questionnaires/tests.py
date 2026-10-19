@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -61,6 +62,29 @@ class MobileKeyAuthTests(TestCase):
         self.assertEqual(version.json()["version_name"], "2.27")
         self.assertEqual(download.status_code, 200)
         self.assertEqual(b"".join(download.streaming_content), b"fake-apk-bytes")
+
+    def test_test_channel_lives_next_to_the_stable_one(self):
+        """The test app (com.example.lea.v2) has its own release: published, checked, downloaded
+        apart from the stable one, which stays as it was."""
+        import tempfile
+        from pathlib import Path
+        from django.test import override_settings
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            releases = Path(tmp)
+            (releases / "version.json").write_text(json.dumps({"version_code": 58, "version_name": "2.49"}), encoding="utf-8")
+            (releases / "latest.apk").write_bytes(b"stable-apk")
+            with patch("django.conf.settings.RELEASES_DIR", releases), patch.dict(os.environ, {"LEA_MOBILE_LOCAL_API_KEY": "local-secret"}):
+                body = {"channel": "test", "version_code": 170, "version_name": "3.0-alpha71", "notes": "", "apk_base64": base64.b64encode(b"test-apk").decode()}
+                published = self.client.post("/api/local/v1/release/publish/", data=json.dumps(body), content_type="application/json", HTTP_X_LEA_LOCAL_KEY="local-secret")
+                test_version = self.client.get("/api/mobile/v1/version/test/", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+                stable_version = self.client.get("/api/mobile/v1/version/", HTTP_AUTHORIZATION=f"Bearer {self.token}").json()
+                test_apk = b"".join(self.client.get("/api/mobile/v1/download/test/", HTTP_AUTHORIZATION=f"Bearer {self.token}").streaming_content)
+                public = b"".join(self.client.get("/download/apk/test/").streaming_content)
+                status = self.client.get("/api/local/v1/release/status/?channel=test", HTTP_X_LEA_LOCAL_KEY="local-secret").json()
+        self.assertEqual(published.status_code, 201)
+        self.assertEqual((test_version["version_code"], stable_version["version_code"]), (170, 58))
+        self.assertEqual((test_apk, public), (b"test-apk", b"test-apk"))
+        self.assertEqual(status["version_name"], "3.0-alpha71")
 
     def test_app_download_requires_a_known_token(self):
         self.assertEqual(self.client.get("/api/mobile/v1/download/").status_code, 401)
