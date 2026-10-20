@@ -356,7 +356,7 @@ def store_uploaded_package(request):
         encrypted_payload = str(body.get("encrypted_payload") or "")
         payload_hash = str(body.get("payload_hash") or "")
         payload_size = int(body.get("payload_size") or len(encrypted_payload))
-        if object_type not in {"questionnaire", "opros", "visit", "workday", "restore_request", "route_change", "team_action", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
+        if object_type not in {"questionnaire", "opros", "visit", "workday", "restore_request", "route_change", "team_action", "visit_order", "order", "photo", "directory_ack", "identity_request"} or not encrypted_payload or len(payload_hash) != 64:
             raise ValueError()
         if request.headers.get("Idempotency-Key") != package_uuid:
             raise ValueError()
@@ -562,7 +562,7 @@ def mobile_inbox(request):
     return _inbox_rows(request, restore=False)
 
 
-ROUTE_TYPES = ("route_plan", "point_photo", "team_stats", "user_role")
+ROUTE_TYPES = ("route_plan", "point_photo", "team_stats", "user_role", "order_result")
 
 
 def _inbox_rows(request, restore=False, route=False):
