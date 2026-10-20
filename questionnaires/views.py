@@ -562,7 +562,7 @@ def mobile_inbox(request):
     return _inbox_rows(request, restore=False)
 
 
-ROUTE_TYPES = ("route_plan", "point_photo", "team_stats", "user_role", "order_result")
+ROUTE_TYPES = ("route_plan", "point_photo", "team_stats", "user_role", "order_result", "rep_plan")
 
 
 def _inbox_rows(request, restore=False, route=False):
